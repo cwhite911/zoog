@@ -188,6 +188,11 @@ pub enum DeviceEvent {
     Shift {
         pressed: bool,
     },
+    /// Shift-held pad transport function (DAW mode).
+    Transport {
+        control: TransportControl,
+        pressed: bool,
+    },
     /// Decoded MIDI the control map has no entry for. Everything is unmapped
     /// until a hardware capture populates the map.
     Unmapped(MidiMessage),
@@ -213,6 +218,17 @@ impl RelativeEncoding {
     }
 }
 
+/// Transport function sent by the Shift-held pads in DAW mode, named after
+/// the labels printed on the hardware's Shift row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportControl {
+    Loop,
+    Stop,
+    Play,
+    Record,
+    Tap,
+}
+
 /// What a CC message maps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CcTarget {
@@ -227,6 +243,8 @@ pub enum CcTarget {
     /// Button-style CC: value >= 64 is pressed (observed: 127 press, 0
     /// release).
     Shift,
+    /// Button-style CC: value >= 64 is pressed.
+    Transport(TransportControl),
 }
 
 /// Data-driven mapping from decoded MIDI to [`DeviceEvent`]. Starts empty;
@@ -260,6 +278,17 @@ impl ControlMap {
         self
     }
 
+    /// Both MiniLab 3 pad banks on channel 9: bank A notes 36..=43 (observed
+    /// in `daw.cap`), bank B notes 44..=51 (observed in `arturia.cap`). The
+    /// active bank is device state toggled with Shift+Pad2 and persists
+    /// across mode switches, so every map accepts both ranges.
+    fn minilab3_pads(mut self) -> Self {
+        for i in 0..8u8 {
+            self = self.pad(9, 36 + i, i).pad(9, 44 + i, i);
+        }
+        self
+    }
+
     /// The MiniLab 3 control map in Arturia mode, taken from the hardware
     /// capture recorded 2026-09-18 (`docs/captures/arturia.cap`); see
     /// `docs/minilab3-control-map.md`. Encoders and faders are absolute
@@ -267,15 +296,7 @@ impl ControlMap {
     pub fn minilab3_arturia() -> Self {
         ControlMap::new()
             .keyboard_channel(0)
-            // Pads: channel 9, notes 44..=51, left to right.
-            .pad(9, 44, 0)
-            .pad(9, 45, 1)
-            .pad(9, 46, 2)
-            .pad(9, 47, 3)
-            .pad(9, 48, 4)
-            .pad(9, 49, 5)
-            .pad(9, 50, 6)
-            .pad(9, 51, 7)
+            .minilab3_pads()
             // Encoders 1..=8.
             .cc(0, 74, CcTarget::Encoder(0))
             .cc(0, 71, CcTarget::Encoder(1))
@@ -303,6 +324,51 @@ impl ControlMap {
             )
             .cc(0, 115, CcTarget::MainEncoderClick)
             .cc(0, 9, CcTarget::Shift)
+    }
+
+    /// The MiniLab 3 control map in DAW mode, taken from the hardware
+    /// capture recorded 2026-09-18 (`docs/captures/daw.cap`), plus the
+    /// transport CCs observed in the post-program-switch tail of
+    /// `arturia.cap` (the device had switched into this program; its Shift
+    /// CC matches). Encoders and faders are absolute 0..=127 here too.
+    pub fn minilab3_daw() -> Self {
+        ControlMap::new()
+            .keyboard_channel(0)
+            .minilab3_pads()
+            // Encoders 1..=8.
+            .cc(0, 86, CcTarget::Encoder(0))
+            .cc(0, 87, CcTarget::Encoder(1))
+            .cc(0, 89, CcTarget::Encoder(2))
+            .cc(0, 90, CcTarget::Encoder(3))
+            .cc(0, 110, CcTarget::Encoder(4))
+            .cc(0, 111, CcTarget::Encoder(5))
+            .cc(0, 116, CcTarget::Encoder(6))
+            .cc(0, 117, CcTarget::Encoder(7))
+            // Faders 1..=4.
+            .cc(0, 14, CcTarget::Fader(0))
+            .cc(0, 15, CcTarget::Fader(1))
+            .cc(0, 30, CcTarget::Fader(2))
+            .cc(0, 31, CcTarget::Fader(3))
+            .cc(0, 1, CcTarget::ModStrip)
+            .cc(
+                0,
+                28,
+                CcTarget::MainEncoderTurn(RelativeEncoding::OffsetFrom64),
+            )
+            .cc(
+                0,
+                29,
+                CcTarget::MainEncoderShiftTurn(RelativeEncoding::OffsetFrom64),
+            )
+            .cc(0, 118, CcTarget::MainEncoderClick)
+            .cc(0, 27, CcTarget::Shift)
+            // Shift-held pads 4..=8 (hardware labels Loop, Stop, Play,
+            // Record, Tap).
+            .cc(0, 105, CcTarget::Transport(TransportControl::Loop))
+            .cc(0, 106, CcTarget::Transport(TransportControl::Stop))
+            .cc(0, 107, CcTarget::Transport(TransportControl::Play))
+            .cc(0, 108, CcTarget::Transport(TransportControl::Record))
+            .cc(0, 109, CcTarget::Transport(TransportControl::Tap))
     }
 
     /// Map one decoded message to a typed event. Never drops input: anything
@@ -378,6 +444,10 @@ impl ControlMap {
                     pressed: value >= 64,
                 },
                 Some(CcTarget::Shift) => DeviceEvent::Shift {
+                    pressed: value >= 64,
+                },
+                Some(CcTarget::Transport(control)) => DeviceEvent::Transport {
+                    control: *control,
                     pressed: value >= 64,
                 },
                 None => DeviceEvent::Unmapped(MidiMessage::ControlChange {
