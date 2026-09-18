@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/lab-midi",
+    "crates/lab-engine",
+    "crates/lab-library",
+    "crates/lab-core",
+    "crates/lab-gui",
+    "crates/labctl",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = ""
+
+[profile.release]
+lto = "thin"
