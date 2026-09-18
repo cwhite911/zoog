@@ -172,9 +172,14 @@ pub enum DeviceEvent {
         index: u8,
     },
     PadPressure {
+        index: u8,
         pressure: u8,
     },
     MainEncoderTurn {
+        delta: i8,
+    },
+    /// Main encoder turned while Shift is held (distinct CC on the device).
+    MainEncoderShiftTurn {
         delta: i8,
     },
     MainEncoderClick {
@@ -215,9 +220,12 @@ pub enum CcTarget {
     Fader(u8),
     ModStrip,
     MainEncoderTurn(RelativeEncoding),
-    /// Button-style CC: value >= 64 is pressed. Verify against capture.
+    MainEncoderShiftTurn(RelativeEncoding),
+    /// Button-style CC: value >= 64 is pressed (observed: 127 press, 0
+    /// release).
     MainEncoderClick,
-    /// Button-style CC: value >= 64 is pressed. Verify against capture.
+    /// Button-style CC: value >= 64 is pressed (observed: 127 press, 0
+    /// release).
     Shift,
 }
 
@@ -230,8 +238,6 @@ pub struct ControlMap {
     pads: HashMap<(u8, u8), u8>,
     /// (channel, controller) -> target.
     ccs: HashMap<(u8, u8), CcTarget>,
-    /// Channels where channel pressure means pad pressure.
-    pad_pressure_channels: HashSet<u8>,
 }
 
 impl ControlMap {
@@ -254,9 +260,49 @@ impl ControlMap {
         self
     }
 
-    pub fn pad_pressure_channel(mut self, channel: u8) -> Self {
-        self.pad_pressure_channels.insert(channel);
-        self
+    /// The MiniLab 3 control map in Arturia mode, taken from the hardware
+    /// capture recorded 2026-09-18 (`docs/captures/arturia.cap`); see
+    /// `docs/minilab3-control-map.md`. Encoders and faders are absolute
+    /// 0..=127 in this mode; the main encoder is relative (offset from 64).
+    pub fn minilab3_arturia() -> Self {
+        ControlMap::new()
+            .keyboard_channel(0)
+            // Pads: channel 9, notes 44..=51, left to right.
+            .pad(9, 44, 0)
+            .pad(9, 45, 1)
+            .pad(9, 46, 2)
+            .pad(9, 47, 3)
+            .pad(9, 48, 4)
+            .pad(9, 49, 5)
+            .pad(9, 50, 6)
+            .pad(9, 51, 7)
+            // Encoders 1..=8.
+            .cc(0, 74, CcTarget::Encoder(0))
+            .cc(0, 71, CcTarget::Encoder(1))
+            .cc(0, 76, CcTarget::Encoder(2))
+            .cc(0, 77, CcTarget::Encoder(3))
+            .cc(0, 93, CcTarget::Encoder(4))
+            .cc(0, 18, CcTarget::Encoder(5))
+            .cc(0, 19, CcTarget::Encoder(6))
+            .cc(0, 16, CcTarget::Encoder(7))
+            // Faders 1..=4.
+            .cc(0, 82, CcTarget::Fader(0))
+            .cc(0, 83, CcTarget::Fader(1))
+            .cc(0, 85, CcTarget::Fader(2))
+            .cc(0, 17, CcTarget::Fader(3))
+            .cc(0, 1, CcTarget::ModStrip)
+            .cc(
+                0,
+                114,
+                CcTarget::MainEncoderTurn(RelativeEncoding::OffsetFrom64),
+            )
+            .cc(
+                0,
+                112,
+                CcTarget::MainEncoderShiftTurn(RelativeEncoding::OffsetFrom64),
+            )
+            .cc(0, 115, CcTarget::MainEncoderClick)
+            .cc(0, 9, CcTarget::Shift)
     }
 
     /// Map one decoded message to a typed event. Never drops input: anything
@@ -323,6 +369,11 @@ impl ControlMap {
                 Some(CcTarget::MainEncoderTurn(encoding)) => DeviceEvent::MainEncoderTurn {
                     delta: encoding.delta(value),
                 },
+                Some(CcTarget::MainEncoderShiftTurn(encoding)) => {
+                    DeviceEvent::MainEncoderShiftTurn {
+                        delta: encoding.delta(value),
+                    }
+                }
                 Some(CcTarget::MainEncoderClick) => DeviceEvent::MainEncoderClick {
                     pressed: value >= 64,
                 },
@@ -342,11 +393,21 @@ impl ControlMap {
                     DeviceEvent::Unmapped(MidiMessage::PitchBend { channel, value })
                 }
             }
-            MidiMessage::ChannelPressure { channel, pressure } => {
-                if self.pad_pressure_channels.contains(&channel) {
-                    DeviceEvent::PadPressure { pressure }
+            // Pads report pressure as per-note polyphonic aftertouch
+            // (observed on hardware in Arturia mode).
+            MidiMessage::PolyPressure {
+                channel,
+                note,
+                pressure,
+            } => {
+                if let Some(&index) = self.pads.get(&(channel, note)) {
+                    DeviceEvent::PadPressure { index, pressure }
                 } else {
-                    DeviceEvent::Unmapped(MidiMessage::ChannelPressure { channel, pressure })
+                    DeviceEvent::Unmapped(MidiMessage::PolyPressure {
+                        channel,
+                        note,
+                        pressure,
+                    })
                 }
             }
             other => DeviceEvent::Unmapped(other),
@@ -468,7 +529,6 @@ mod tests {
             .keyboard_channel(0)
             .pad(9, 36, 0)
             .pad(9, 37, 1)
-            .pad_pressure_channel(9)
             .cc(0, 10, CcTarget::Encoder(0))
             .cc(0, 11, CcTarget::Fader(2))
             .cc(0, 1, CcTarget::ModStrip)
@@ -507,10 +567,17 @@ mod tests {
             m.map(MidiMessage::decode(&[0x89, 37, 0])),
             DeviceEvent::PadUp { index: 1 }
         );
+        // Pad pressure is per-note polyphonic aftertouch on the pad's note.
         assert_eq!(
-            m.map(MidiMessage::decode(&[0xD9, 42])),
-            DeviceEvent::PadPressure { pressure: 42 }
+            m.map(MidiMessage::decode(&[0xA9, 36, 42])),
+            DeviceEvent::PadPressure {
+                index: 0,
+                pressure: 42
+            }
         );
+        // Poly pressure on an unmapped note falls through.
+        let stray = MidiMessage::decode(&[0xA9, 40, 42]);
+        assert_eq!(m.map(stray.clone()), DeviceEvent::Unmapped(stray));
     }
 
     #[test]
@@ -542,6 +609,87 @@ mod tests {
         assert_eq!(
             m.map(MidiMessage::decode(&[0xB0, 22, 0])),
             DeviceEvent::Shift { pressed: false }
+        );
+    }
+
+    #[test]
+    fn arturia_map_covers_observed_controls() {
+        // Byte values below are taken from docs/captures/arturia.cap.
+        let m = ControlMap::minilab3_arturia();
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0x90, 60, 55])),
+            DeviceEvent::NoteOn {
+                note: 60,
+                velocity: 55
+            }
+        );
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0xE0, 0x00, 0x40])),
+            DeviceEvent::PitchBend { value: 8192 }
+        );
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0xB0, 1, 127])),
+            DeviceEvent::ModStrip { value: 127 }
+        );
+        // Encoder CCs in panel order: 74 71 76 77 93 18 19 16.
+        for (i, cc) in [74, 71, 76, 77, 93, 18, 19, 16].into_iter().enumerate() {
+            assert_eq!(
+                m.map(MidiMessage::decode(&[0xB0, cc, 42])),
+                DeviceEvent::Encoder {
+                    index: i as u8,
+                    value: 42
+                }
+            );
+        }
+        // Fader CCs in panel order: 82 83 85 17.
+        for (i, cc) in [82, 83, 85, 17].into_iter().enumerate() {
+            assert_eq!(
+                m.map(MidiMessage::decode(&[0xB0, cc, 100])),
+                DeviceEvent::Fader {
+                    index: i as u8,
+                    value: 100
+                }
+            );
+        }
+        // Pads: channel 9, notes 44..=51, with poly aftertouch.
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0x99, 44, 15])),
+            DeviceEvent::PadDown {
+                index: 0,
+                velocity: 15
+            }
+        );
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0x89, 51, 0])),
+            DeviceEvent::PadUp { index: 7 }
+        );
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0xA9, 44, 90])),
+            DeviceEvent::PadPressure {
+                index: 0,
+                pressure: 90
+            }
+        );
+        // Main encoder: CC114 relative, CC112 with Shift, CC115 click.
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0xB0, 114, 65])),
+            DeviceEvent::MainEncoderTurn { delta: 1 }
+        );
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0xB0, 114, 62])),
+            DeviceEvent::MainEncoderTurn { delta: -2 }
+        );
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0xB0, 112, 64])),
+            DeviceEvent::MainEncoderShiftTurn { delta: 0 }
+        );
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0xB0, 115, 127])),
+            DeviceEvent::MainEncoderClick { pressed: true }
+        );
+        assert_eq!(
+            m.map(MidiMessage::decode(&[0xB0, 9, 127])),
+            DeviceEvent::Shift { pressed: true }
         );
     }
 
