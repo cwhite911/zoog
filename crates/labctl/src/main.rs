@@ -13,6 +13,7 @@ use lab_midi::capture::{CaptureLine, write_line};
 use lab_midi::device::{Device, MidirDevice};
 use lab_midi::event::{MidiMessage, TimedMessage};
 use lab_midi::ports::{DEFAULT_PORT_MATCH, list_ports};
+use lab_midi::sysex::{ColorTarget, display_text, init, pad_color};
 
 const CLIENT_NAME: &str = "benchlab";
 
@@ -30,6 +31,14 @@ USAGE:
         --capture, messages are also written to FILE in the capture format;
         typing a line of text + Enter inserts it as a '# marker' comment.
         Ctrl-C to stop.
+
+    labctl display LINE1 [LINE2]
+        Send the init handshake, then show two lines of text on the device
+        display. DAW mode only.
+
+    labctl pad <1-8|all> R G B
+        Set a pad's temporary color (bank A IDs, DAW-mode message).
+        Components are 0-127.
 ";
 
 fn main() -> ExitCode {
@@ -37,6 +46,8 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("ports") => cmd_ports(),
         Some("monitor") => cmd_monitor(&args[1..]),
+        Some("display") => cmd_display(&args[1..]),
+        Some("pad") => cmd_pad(&args[1..]),
         Some("--help" | "-h" | "help") | None => {
             print!("{USAGE}");
             ExitCode::from(if args.is_empty() { 2 } else { 0 })
@@ -180,6 +191,84 @@ fn cmd_monitor(args: &[String]) -> ExitCode {
             }
         }
     }
+}
+
+fn open_device_or_exit() -> Result<MidirDevice, ExitCode> {
+    match MidirDevice::open(CLIENT_NAME, DEFAULT_PORT_MATCH) {
+        Ok(device) if device.has_output() => Ok(device),
+        Ok(_) => {
+            eprintln!("labctl: device found but it has no MIDI output port");
+            Err(ExitCode::FAILURE)
+        }
+        Err(e) => {
+            eprintln!("labctl: {e}");
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+fn cmd_display(args: &[String]) -> ExitCode {
+    let (line1, line2) = match args {
+        [l1] => (l1.as_str(), ""),
+        [l1, l2] => (l1.as_str(), l2.as_str()),
+        _ => {
+            eprintln!("labctl display: expected LINE1 [LINE2]");
+            return ExitCode::from(2);
+        }
+    };
+    let mut device = match open_device_or_exit() {
+        Ok(d) => d,
+        Err(code) => return code,
+    };
+    let result = device
+        .send(&init())
+        .and_then(|_| device.send(&display_text(line1, line2)));
+    match result {
+        Ok(()) => {
+            println!("sent: {line1:?} / {line2:?} (visible in DAW mode only)");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("labctl display: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_pad(args: &[String]) -> ExitCode {
+    let usage = "labctl pad: expected <1-8|all> R G B (components 0-127)";
+    let [pad, r, g, b] = args else {
+        eprintln!("{usage}");
+        return ExitCode::from(2);
+    };
+    let parse = |s: &String| s.parse::<u8>().ok().filter(|v| *v <= 127);
+    let (Some(r), Some(g), Some(b)) = (parse(r), parse(g), parse(b)) else {
+        eprintln!("{usage}");
+        return ExitCode::from(2);
+    };
+    let pads: Vec<u8> = if pad == "all" {
+        (0..8).collect()
+    } else {
+        match pad.parse::<u8>() {
+            Ok(n) if (1..=8).contains(&n) => vec![n - 1],
+            _ => {
+                eprintln!("{usage}");
+                return ExitCode::from(2);
+            }
+        }
+    };
+    let mut device = match open_device_or_exit() {
+        Ok(d) => d,
+        Err(code) => return code,
+    };
+    for index in pads {
+        if let Err(e) = device.send(&pad_color(ColorTarget::PadTemporary(index), r, g, b)) {
+            eprintln!("labctl pad: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    println!("sent color ({r}, {g}, {b})");
+    ExitCode::SUCCESS
 }
 
 fn port_still_present(matcher: &str) -> bool {

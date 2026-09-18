@@ -10,3 +10,5 @@ pub mod capture;
 pub mod device;
 pub mod event;
 pub mod ports;
+pub mod rate;
+pub mod sysex;
