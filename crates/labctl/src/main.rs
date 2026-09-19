@@ -354,50 +354,6 @@ fn parse_play_args(args: &[String]) -> Result<PlayArgs, String> {
 /// Loads and binds the macro mapping for `plugin_id`, if one applies.
 /// An explicitly requested mapping that fails is an error; the default
 /// mapping file is optional.
-fn load_macro_controls(
-    requested: Option<&str>,
-    plugin_id: &str,
-    params: &[lab_engine::params::ParamDescription],
-) -> Result<Option<lab_core::mapping::MacroControls>, Box<dyn std::error::Error>> {
-    use lab_core::mapping::{MacroControls, MappingFile};
-
-    const DEFAULT_MAPPING: &str = "mappings/surge-xt.toml";
-    let (path, required) = match requested {
-        Some(path) => (path.to_string(), true),
-        None => (DEFAULT_MAPPING.to_string(), false),
-    };
-    if !std::path::Path::new(&path).exists() {
-        if required {
-            return Err(format!("mapping file {path} does not exist").into());
-        }
-        println!("no mapping file at {path}; encoders and faders are inactive");
-        return Ok(None);
-    }
-    let file = MappingFile::load(std::path::Path::new(&path))?;
-    if file.plugin_id != plugin_id {
-        if required {
-            return Err(format!(
-                "mapping {path} is for {}, but loaded plugin is {plugin_id}",
-                file.plugin_id
-            )
-            .into());
-        }
-        println!(
-            "mapping {path} is for {}; encoders and faders are inactive",
-            file.plugin_id
-        );
-        return Ok(None);
-    }
-    let controls = MacroControls::bind(&file, plugin_id, params)?;
-    println!("mapping loaded from {path}:");
-    let mut bindings: Vec<_> = controls.bindings().collect();
-    bindings.sort_by_key(|b| format!("{:?}", b.control));
-    for b in bindings {
-        println!("  {:?} -> {} (param {})", b.control, b.label, b.param_id);
-    }
-    Ok(Some(controls))
-}
-
 fn cmd_play(args: &[String]) -> ExitCode {
     let args = match parse_play_args(args) {
         Ok(args) => args,
@@ -415,270 +371,66 @@ fn cmd_play(args: &[String]) -> ExitCode {
     }
 }
 
-/// Control-thread request executed on the host thread.
-enum HostCmd {
-    LoadPreset {
-        id: i64,
-        name: String,
-        path: Option<std::path::PathBuf>,
-        load_key: Option<String>,
-    },
-}
-
-/// Host-thread notification consumed by the control thread.
-enum CtrlMsg {
-    PresetLoaded {
-        name: String,
-        params: Vec<lab_engine::params::ParamDescription>,
-    },
-    PresetLoadFailed {
-        name: String,
-    },
-}
-
 fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
-    use lab_core::browser::{BrowseItem, Browser};
-    use lab_engine::audio::activate_to_stream;
-    use lab_engine::discovery::find_plugin;
-    use lab_engine::events::RtMidi;
-    use lab_engine::host::HostThreadMessage;
+    use lab_core::app::{CoreConfig, CoreEvent, start};
 
-    let plugin = find_plugin(&args.plugin)?;
-    println!("loading {plugin}");
+    let config = CoreConfig {
+        plugin_match: args.plugin.clone(),
+        mapping_path: args.mapping.clone().map(std::path::PathBuf::from),
+        arturia_mode: args.arturia_mode,
+        engine: args.config,
+        ..CoreConfig::default()
+    };
+    let (_handle, events) = start(config);
 
-    let (mut instance, host_rx) = hostutil::make_instance(&plugin)?;
-
-    // Resolve the macro mapping against the plugin's parameters.
-    let params = lab_engine::params::list_params(&mut instance);
-    let macro_controls = load_macro_controls(args.mapping.as_deref(), &plugin.id, &params)?;
-
-    // Preset library for hardware browsing (indexed on first use).
-    let mut library = presets::open_library()?;
-    presets::ensure_indexed(&mut library, &plugin)?;
-    let browse_items: Vec<BrowseItem> = library
-        .search(&lab_library::Filter {
-            engine: Some(plugin.id.clone()),
-            ..Default::default()
-        })?
-        .into_iter()
-        .map(|row| BrowseItem {
-            id: row.id,
-            name: row.name,
-            category: row.category,
-            path: row.path,
-            load_key: row.load_key,
-        })
-        .collect();
-    println!("{} presets browsable", browse_items.len());
-
-    // MIDI: device thread -> mpsc -> control thread, which routes playable
-    // events into the RtMidi ring, mapped control moves into the param
-    // ring, and feedback back out to the device display.
-    let (mut midi_producer, midi_consumer) = rtrb::RingBuffer::<RtMidi>::new(1024);
-    let (mut param_producer, param_consumer) =
-        rtrb::RingBuffer::<lab_engine::events::ParamChange>::new(256);
-    let mut device = MidirDevice::open(CLIENT_NAME, DEFAULT_PORT_MATCH)
-        .map(Some)
-        .unwrap_or_else(|e| {
-            println!("no controller ({e}); running audio without MIDI input");
-            None
-        });
-    let plugin_title = plugin.name.clone().unwrap_or_else(|| plugin.id.clone());
-    let arturia_mode = args.arturia_mode;
-    let (cmd_tx, cmd_rx) = channel::<HostCmd>();
-    let (ctrl_tx, ctrl_rx) = channel::<CtrlMsg>();
-    let _control_thread = device.take().map(|mut device| {
-        println!("controller connected: {:?}", device.input_port_name());
-        let mut controls = macro_controls;
-        let mut browser = Browser::new(browse_items);
-        thread::spawn(move || {
-            use lab_midi::event::{ControlMap, DeviceEvent};
-            use lab_midi::rate::Coalescer;
-
-            let map = if arturia_mode {
-                ControlMap::minilab3_arturia()
-            } else {
-                ControlMap::minilab3_daw()
-            };
-            let mut coalescer: Coalescer<(String, String)> =
-                Coalescer::new(Duration::from_millis(33));
-            let mut revert_at: Option<std::time::Instant> = None;
-            let mut title = plugin_title;
-
-            let show = |device: &mut MidirDevice, line1: &str, line2: &str| {
-                if device.has_output() {
-                    let _ = device.send(&display_text(line1, line2));
-                }
-            };
-            if device.has_output() {
-                let _ = device.send(&init());
-            }
-            show(&mut device, &title, "");
-
-            loop {
-                let now = std::time::Instant::now();
-                if let Some(msg) = device.recv_timeout(Duration::from_millis(50)) {
-                    match map.map(MidiMessage::decode(&msg.bytes)) {
-                        DeviceEvent::NoteOn { .. }
-                        | DeviceEvent::NoteOff { .. }
-                        | DeviceEvent::PitchBend { .. }
-                        | DeviceEvent::ModStrip { .. }
-                        | DeviceEvent::PadDown { .. }
-                        | DeviceEvent::PadUp { .. }
-                        | DeviceEvent::PadPressure { .. } => {
-                            if let Some(rt) = RtMidi::from_bytes(msg.timestamp_us, &msg.bytes) {
-                                let _ = midi_producer.push(rt);
-                            }
-                        }
-                        event @ (DeviceEvent::Encoder { .. } | DeviceEvent::Fader { .. }) => {
-                            if let Some(update) = controls.as_mut().and_then(|c| c.handle(&event)) {
-                                let _ = param_producer.push(update.change);
-                                if let Some((l1, l2)) =
-                                    coalescer.offer((update.label, update.display_value), now)
-                                {
-                                    show(&mut device, &l1, &l2);
-                                }
-                                revert_at = Some(now + Duration::from_millis(1200));
-                            }
-                        }
-                        DeviceEvent::MainEncoderTurn { delta } => {
-                            if let Some(item) = browser.scroll(delta) {
-                                let name = item.name.clone();
-                                let (pos, len) = browser.position();
-                                let line2 = format!("{} {pos}/{len}", browser.category_name());
-                                if let Some((l1, l2)) = coalescer.offer((name, line2), now) {
-                                    show(&mut device, &l1, &l2);
-                                }
-                                revert_at = Some(now + Duration::from_secs(3));
-                            }
-                        }
-                        DeviceEvent::MainEncoderShiftTurn { delta } => {
-                            if delta != 0 {
-                                let category = browser.cycle_category(delta).to_string();
-                                let name = browser
-                                    .current()
-                                    .map(|i| i.name.clone())
-                                    .unwrap_or_default();
-                                if let Some((l1, l2)) =
-                                    coalescer.offer((format!("[{category}]"), name), now)
-                                {
-                                    show(&mut device, &l1, &l2);
-                                }
-                                revert_at = Some(now + Duration::from_secs(3));
-                            }
-                        }
-                        DeviceEvent::MainEncoderClick { pressed: true } => {
-                            if let Some(item) = browser.current() {
-                                let name = item.name.clone();
-                                let _ = cmd_tx.send(HostCmd::LoadPreset {
-                                    id: item.id,
-                                    name: name.clone(),
-                                    path: item.path.clone(),
-                                    load_key: item.load_key.clone(),
-                                });
-                                show(&mut device, "Loading...", &name);
-                                revert_at = None;
-                            }
-                        }
-                        // Shift, transport, click release: nothing yet.
-                        _ => {}
-                    }
-                }
-                let now = std::time::Instant::now();
-                while let Ok(msg) = ctrl_rx.try_recv() {
-                    match msg {
-                        CtrlMsg::PresetLoaded { name, params } => {
-                            if let Some(c) = controls.as_mut() {
-                                c.reset_values(&params);
-                            }
-                            title = name;
-                            show(&mut device, &title, "");
-                            revert_at = None;
-                        }
-                        CtrlMsg::PresetLoadFailed { name } => {
-                            show(&mut device, "Load failed", &name);
-                            revert_at = Some(now + Duration::from_secs(2));
-                        }
-                    }
-                }
-                if let Some((l1, l2)) = coalescer.poll(now) {
-                    show(&mut device, &l1, &l2);
-                }
-                if revert_at.is_some_and(|t| now >= t) {
-                    revert_at = None;
-                    show(&mut device, &title, "");
-                }
-            }
-        })
-    });
-
-    let (_stream, stats) = activate_to_stream(
-        &mut instance,
-        midi_consumer,
-        Some(param_consumer),
-        args.config,
-    )?;
-    println!(
-        "audio running ({} Hz requested, {} frames requested). Play the keys; Ctrl-C to stop.",
-        args.config.sample_rate, args.config.buffer_frames
-    );
-
-    let timers = instance.access_handler(|h| h.timer_support().map(|ext| (h.timers.clone(), ext)));
+    println!("starting; Ctrl-C to stop.");
     let mut last_stats = std::time::Instant::now();
-    loop {
-        if let Ok(HostThreadMessage::RunOnMainThread) =
-            host_rx.recv_timeout(Duration::from_millis(30))
-        {
-            instance.call_on_main_thread_callback();
-        }
-        if let Some((timers, timer_ext)) = &timers {
-            timers.tick(timer_ext, &instance.plugin_handle());
-        }
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                HostCmd::LoadPreset {
-                    id,
-                    name,
-                    path,
-                    load_key,
-                } => {
-                    match lab_engine::presets::load_preset(
-                        &mut instance,
-                        path.as_deref(),
-                        load_key.as_deref(),
-                    ) {
-                        Ok(()) => {
-                            println!("loaded preset {name:?}");
-                            let params = lab_engine::params::list_params(&mut instance);
-                            let now_s = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs() as i64)
-                                .unwrap_or(0);
-                            let _ = library.touch_last_used(id, now_s);
-                            let _ = ctrl_tx.send(CtrlMsg::PresetLoaded { name, params });
-                        }
-                        Err(e) => {
-                            eprintln!("preset load failed for {name:?}: {e}");
-                            let _ = ctrl_tx.send(CtrlMsg::PresetLoadFailed { name });
-                        }
-                    }
+    for event in events {
+        match event {
+            CoreEvent::Ready {
+                plugin_title,
+                engine_running,
+                device_connected,
+                presets,
+                controls,
+                sample_rate,
+                buffer_frames,
+                ..
+            } => {
+                println!(
+                    "ready: {plugin_title} (engine: {}, controller: {}), {} presets browsable, {} controls mapped, {sample_rate} Hz / {buffer_frames} frames requested",
+                    if engine_running { "running" } else { "stub" },
+                    if device_connected {
+                        "connected"
+                    } else {
+                        "absent"
+                    },
+                    presets.len(),
+                    controls.len(),
+                );
+            }
+            CoreEvent::PresetLoaded { name, .. } => println!("loaded preset {name:?}"),
+            CoreEvent::PresetLoadFailed { name } => println!("preset load FAILED: {name:?}"),
+            CoreEvent::Stats {
+                callbacks,
+                overruns,
+                max_callback_ms,
+                min_frames,
+                max_frames,
+                stream_errors,
+            } => {
+                if last_stats.elapsed() >= Duration::from_secs(5) {
+                    last_stats = std::time::Instant::now();
+                    println!(
+                        "callbacks={callbacks} overruns={overruns} max_callback={max_callback_ms:.2}ms frames={min_frames}..{max_frames} stream_errors={stream_errors}"
+                    );
                 }
             }
-        }
-        if last_stats.elapsed() >= Duration::from_secs(5) {
-            use std::sync::atomic::Ordering::Relaxed;
-            last_stats = std::time::Instant::now();
-            let max_ms = stats.max_callback_ns.load(Relaxed) as f64 / 1e6;
-            println!(
-                "callbacks={} overruns={} max_callback={max_ms:.2}ms frames={}..{} stream_errors={}",
-                stats.callbacks.load(Relaxed),
-                stats.overruns.load(Relaxed),
-                stats.min_frames.load(Relaxed),
-                stats.max_frames.load(Relaxed),
-                stats.stream_errors.load(Relaxed),
-            );
+            CoreEvent::Error(e) => eprintln!("core: {e}"),
+            _ => {}
         }
     }
+    Ok(())
 }
 
 fn open_device_or_exit() -> Result<MidirDevice, ExitCode> {

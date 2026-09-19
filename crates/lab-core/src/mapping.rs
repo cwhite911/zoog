@@ -94,7 +94,10 @@ impl Binding {
 /// The result of a handled control move.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamUpdate {
+    pub control: Control,
     pub change: ParamChange,
+    /// The control's new normalized position (0.0..=1.0).
+    pub normalized: f64,
     /// `label` for the display's top line.
     pub label: String,
     /// Percent text for the display's bottom line.
@@ -229,13 +232,48 @@ impl MacroControls {
         let value = binding.value_for(normalized);
         self.values.insert(binding.param_id, value);
         Some(ParamUpdate {
+            control,
             change: ParamChange {
                 param_id: binding.param_id,
                 value,
             },
+            normalized,
             label: binding.label.clone(),
             display_value: format!("{:.0}%", normalized * 100.0),
         })
+    }
+
+    /// Sets a bound control's value directly (e.g. an on-screen knob drag),
+    /// bypassing soft takeover. The control's hardware pickup latch is
+    /// released so the physical knob cannot make the value jump afterwards.
+    pub fn set_normalized(&mut self, control: Control, normalized: f64) -> Option<ParamUpdate> {
+        let binding = self.bindings.get(&control)?;
+        let normalized = normalized.clamp(0.0, 1.0);
+        let value = binding.value_for(normalized);
+        self.values.insert(binding.param_id, value);
+        if let Some(takeover) = self.takeover.get_mut(&control) {
+            takeover.release();
+        }
+        Some(ParamUpdate {
+            control,
+            change: ParamChange {
+                param_id: binding.param_id,
+                value,
+            },
+            normalized,
+            label: binding.label.clone(),
+            display_value: format!("{:.0}%", normalized * 100.0),
+        })
+    }
+
+    /// The current normalized value of a binding's parameter.
+    pub fn normalized_value(&self, binding: &Binding) -> f64 {
+        let value = self
+            .values
+            .get(&binding.param_id)
+            .copied()
+            .unwrap_or(binding.lo);
+        binding.normalized_of(value)
     }
 
     /// Records externally-changed parameter values (preset load) and drops

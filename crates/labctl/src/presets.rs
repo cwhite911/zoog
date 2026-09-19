@@ -98,18 +98,6 @@ pub fn scan_into_library(
     Ok(library.rescan(&plugin.id, &imports)?)
 }
 
-/// Ensures the library has an up-to-date index for `plugin`, rescanning
-/// when empty or stale (the incremental check compares path+mtime sets).
-pub fn ensure_indexed(library: &mut Library, plugin: &FoundPlugin) -> Result<(), Box<dyn Error>> {
-    let count = library.count(&plugin.id)?;
-    if count == 0 {
-        println!("library empty for {}; scanning presets...", plugin.id);
-        let n = scan_into_library(library, plugin)?;
-        println!("indexed {n} presets");
-    }
-    Ok(())
-}
-
 fn cmd_scan(args: &[String]) -> Result<(), Box<dyn Error>> {
     let plugin_match = match args {
         [] => DEFAULT_PLUGIN.to_string(),

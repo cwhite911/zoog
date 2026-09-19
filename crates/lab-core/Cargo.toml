@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 lab-engine = { version = "0.1.0", path = "../lab-engine" }
+lab-library = { version = "0.1.0", path = "../lab-library" }
 lab-midi = { version = "0.1.0", path = "../lab-midi" }
+rtrb = "0.4.0"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.6"
