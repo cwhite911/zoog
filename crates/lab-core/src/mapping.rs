@@ -52,6 +52,13 @@ pub struct ControlEntry {
     /// Optional plain-value range override (defaults to the param's range).
     pub min: Option<f64>,
     pub max: Option<f64>,
+    /// Take the live label from the plugin's current parameter name
+    /// (refreshed on preset load), stripping `param-name` as a prefix.
+    /// Surge macros rename themselves when a patch assigns them
+    /// ("M1: -" unassigned, "M1: Cutoff" assigned), so this surfaces the
+    /// patch's own macro names and marks unassigned macros inactive.
+    #[serde(default)]
+    pub label_from_param: bool,
 }
 
 impl MappingFile {
@@ -75,9 +82,40 @@ pub struct Binding {
     /// Plain-value range the 0..=127 control sweeps over.
     pub lo: f64,
     pub hi: f64,
+    /// Whether the parameter appears to be doing anything in the current
+    /// patch. Always true unless `label-from-param` is set and the live
+    /// name is the unassigned marker.
+    pub active: bool,
+    /// The label from the mapping file, kept as the fallback.
+    file_label: String,
+    label_from_param: bool,
+    name_prefix: Option<String>,
 }
 
 impl Binding {
+    /// Refreshes the live label and activity flag from the parameter's
+    /// current name.
+    fn refresh_label(&mut self, param_name: &str) {
+        if !self.label_from_param {
+            return;
+        }
+        let stripped = self
+            .name_prefix
+            .as_deref()
+            .and_then(|prefix| param_name.strip_prefix(prefix))
+            .unwrap_or(param_name)
+            .trim()
+            .trim_start_matches(':')
+            .trim();
+        if stripped.is_empty() || stripped == "-" {
+            self.active = false;
+            self.label = self.file_label.clone();
+        } else {
+            self.active = true;
+            self.label = stripped.to_string();
+        }
+    }
+
     fn value_for(&self, normalized: f64) -> f64 {
         self.lo + normalized * (self.hi - self.lo)
     }
@@ -194,16 +232,19 @@ impl MacroControls {
                 })?;
 
             values.insert(param.id, param.value.unwrap_or(param.default_value));
-            bindings.insert(
+            let mut binding = Binding {
                 control,
-                Binding {
-                    control,
-                    label: entry.label.clone(),
-                    param_id: param.id,
-                    lo: entry.min.unwrap_or(param.min_value),
-                    hi: entry.max.unwrap_or(param.max_value),
-                },
-            );
+                label: entry.label.clone(),
+                param_id: param.id,
+                lo: entry.min.unwrap_or(param.min_value),
+                hi: entry.max.unwrap_or(param.max_value),
+                active: true,
+                file_label: entry.label.clone(),
+                label_from_param: entry.label_from_param,
+                name_prefix: entry.param_name.clone(),
+            };
+            binding.refresh_label(&param.name);
+            bindings.insert(control, binding);
         }
 
         Ok(MacroControls {
@@ -276,14 +317,19 @@ impl MacroControls {
         binding.normalized_of(value)
     }
 
-    /// Records externally-changed parameter values (preset load) and drops
-    /// all pickup latches so controls do not jump.
+    /// Records externally-changed parameter values (preset load), refreshes
+    /// live labels, and drops all pickup latches so controls do not jump.
     pub fn reset_values(&mut self, params: &[ParamDescription]) {
         for param in params {
             if self.values.contains_key(&param.id)
                 && let Some(value) = param.value
             {
                 self.values.insert(param.id, value);
+            }
+        }
+        for binding in self.bindings.values_mut() {
+            if let Some(param) = params.iter().find(|p| p.id == binding.param_id) {
+                binding.refresh_label(&param.name);
             }
         }
         for takeover in self.takeover.values_mut() {
@@ -489,6 +535,47 @@ param-id = 200
                 .handle(&DeviceEvent::Fader { index: 0, value: 5 })
                 .is_some()
         );
+    }
+
+    #[test]
+    fn live_labels_follow_the_patch() {
+        let text = r#"
+plugin-id = "org.example.synth"
+
+[[encoder]]
+index = 1
+label = "Macro 1"
+param-id = 100
+param-name = "M1:"
+label-from-param = true
+"#;
+        let file = MappingFile::parse(text).unwrap();
+        let mut params = params();
+        // At bind time the macro is unassigned ("M1: -").
+        let mut controls = MacroControls::bind(&file, "org.example.synth", &params).unwrap();
+        let binding = controls.bindings().next().unwrap();
+        assert!(!binding.active);
+        assert_eq!(binding.label, "Macro 1");
+
+        // A patch assigns and renames the macro.
+        params[0].name = "M1: Cutoff".into();
+        controls.reset_values(&params);
+        let binding = controls.bindings().next().unwrap();
+        assert!(binding.active);
+        assert_eq!(binding.label, "Cutoff");
+
+        // Hardware display feedback uses the live label too.
+        let update = controls
+            .handle(&DeviceEvent::Encoder { index: 0, value: 0 })
+            .unwrap();
+        assert_eq!(update.label, "Cutoff");
+
+        // Back to an unassigned patch: inactive again, fallback label.
+        params[0].name = "M1: -".into();
+        controls.reset_values(&params);
+        let binding = controls.bindings().next().unwrap();
+        assert!(!binding.active);
+        assert_eq!(binding.label, "Macro 1");
     }
 
     #[test]

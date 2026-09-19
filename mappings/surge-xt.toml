@@ -16,48 +16,56 @@ index = 1
 label = "Macro 1"
 param-id = 825615485
 param-name = "M1:"
+label-from-param = true
 
 [[encoder]]
 index = 2
 label = "Macro 2"
 param-id = 825615486
 param-name = "M2:"
+label-from-param = true
 
 [[encoder]]
 index = 3
 label = "Macro 3"
 param-id = 825615487
 param-name = "M3:"
+label-from-param = true
 
 [[encoder]]
 index = 4
 label = "Macro 4"
 param-id = 825615488
 param-name = "M4:"
+label-from-param = true
 
 [[encoder]]
 index = 5
 label = "Macro 5"
 param-id = 825615489
 param-name = "M5:"
+label-from-param = true
 
 [[encoder]]
 index = 6
 label = "Macro 6"
 param-id = 825615490
 param-name = "M6:"
+label-from-param = true
 
 [[encoder]]
 index = 7
 label = "Macro 7"
 param-id = 825615491
 param-name = "M7:"
+label-from-param = true
 
 [[encoder]]
 index = 8
 label = "Macro 8"
 param-id = 825615492
 param-name = "M8:"
+label-from-param = true
 
 [[fader]]
 index = 1

@@ -68,6 +68,18 @@ pub fn run(boot: Boot) -> iced::Result {
         .run()
 }
 
+fn project_controls(controls: &[lab_core::app::ControlInfo]) -> Vec<ControlView> {
+    controls
+        .iter()
+        .map(|c| ControlView {
+            control: c.control,
+            label: c.label.clone(),
+            normalized: c.normalized,
+            active: c.active,
+        })
+        .collect()
+}
+
 fn app_title(_app: &App) -> String {
     "benchlab".to_string()
 }
@@ -278,14 +290,7 @@ impl App {
                 self.device_connected = device_connected;
                 self.presets = presets;
                 self.categories = categories;
-                self.control_views = controls
-                    .iter()
-                    .map(|c| ControlView {
-                        control: c.control,
-                        label: c.label.clone(),
-                        normalized: c.normalized,
-                    })
-                    .collect();
+                self.control_views = project_controls(&controls);
             }
             CoreEvent::PresetLoaded { id, name } => {
                 self.loaded = Some(id);
@@ -307,6 +312,9 @@ impl App {
                 }
             }
             CoreEvent::BrowserSelected { id } => self.selected = Some(id),
+            CoreEvent::ControlsRebound { controls } => {
+                self.control_views = project_controls(&controls);
+            }
             CoreEvent::LibraryRescanned {
                 presets,
                 categories,

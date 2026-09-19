@@ -105,6 +105,9 @@ pub struct ControlInfo {
     pub control: Control,
     pub label: String,
     pub normalized: f64,
+    /// False when the mapped parameter looks unassigned in the current
+    /// patch (see the mapping file's `label-from-param`).
+    pub active: bool,
 }
 
 /// Events out of the core.
@@ -141,6 +144,10 @@ pub enum CoreEvent {
     /// Hardware browser cursor moved to this preset id.
     BrowserSelected {
         id: i64,
+    },
+    /// Control labels/values/activity refreshed (after a preset load).
+    ControlsRebound {
+        controls: Vec<ControlInfo>,
     },
     /// Library rescan finished; fresh preset list attached.
     LibraryRescanned {
@@ -553,14 +560,7 @@ fn bind_mapping(
     };
     match MacroControls::bind(&file, plugin_id, params) {
         Ok(controls) => {
-            let infos = controls
-                .bindings()
-                .map(|binding| ControlInfo {
-                    control: binding.control,
-                    label: binding.label.clone(),
-                    normalized: controls.normalized_value(binding),
-                })
-                .collect();
+            let infos = control_infos(&controls);
             (Some(controls), infos)
         }
         Err(e) => {
@@ -568,6 +568,19 @@ fn bind_mapping(
             (None, Vec::new())
         }
     }
+}
+
+/// Projects the current bindings into frontend control infos.
+fn control_infos(controls: &MacroControls) -> Vec<ControlInfo> {
+    controls
+        .bindings()
+        .map(|binding| ControlInfo {
+            control: binding.control,
+            label: binding.label.clone(),
+            normalized: controls.normalized_value(binding),
+            active: binding.active,
+        })
+        .collect()
 }
 
 fn open_library(config: &CoreConfig) -> Result<Library, AnyError> {
@@ -784,6 +797,9 @@ impl ControlThread {
                     ToControl::PresetLoaded { name, params } => {
                         if let Some(c) = self.controls.as_mut() {
                             c.reset_values(&params);
+                            let _ = self.events.send(CoreEvent::ControlsRebound {
+                                controls: control_infos(c),
+                            });
                         }
                         self.title = name.clone();
                         self.show(&name, "");

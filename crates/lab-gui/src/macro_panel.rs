@@ -17,6 +17,8 @@ pub struct ControlView {
     pub control: Control,
     pub label: String,
     pub normalized: f64,
+    /// Dimmed when the mapped parameter looks unassigned in this patch.
+    pub active: bool,
 }
 
 pub struct MacroPanel<'a> {
@@ -193,12 +195,21 @@ impl MacroPanel<'_> {
         let radius = knob_radius(bounds);
         let center = knob_center(index, bounds);
         let value = self.value_of(Control::Encoder(index)) as f32;
-        let label = self
+        let view = self
             .controls
             .iter()
-            .find(|c| c.control == Control::Encoder(index))
+            .find(|c| c.control == Control::Encoder(index));
+        let label = view
             .map(|c| c.label.clone())
             .unwrap_or_else(|| format!("Enc {}", index + 1));
+        let active = view.is_some_and(|c| c.active);
+        let dim = |color: Color| {
+            if active {
+                color
+            } else {
+                Color { a: 0.35, ..color }
+            }
+        };
 
         // 270-degree sweep from lower-left to lower-right.
         let start = Radians(std::f32::consts::PI * 0.75);
@@ -214,7 +225,9 @@ impl MacroPanel<'_> {
         });
         frame.stroke(
             &track,
-            Stroke::default().with_color(theme::TRACK).with_width(5.0),
+            Stroke::default()
+                .with_color(dim(theme::TRACK))
+                .with_width(5.0),
         );
         if value > 0.001 {
             let fill = Path::new(|b| {
@@ -227,7 +240,9 @@ impl MacroPanel<'_> {
             });
             frame.stroke(
                 &fill,
-                Stroke::default().with_color(theme::ACCENT).with_width(5.0),
+                Stroke::default()
+                    .with_color(dim(theme::ACCENT))
+                    .with_width(5.0),
             );
         }
         // Pointer line.
@@ -244,14 +259,16 @@ impl MacroPanel<'_> {
         );
         frame.stroke(
             &pointer,
-            Stroke::default().with_color(theme::TEXT).with_width(3.0),
+            Stroke::default()
+                .with_color(dim(theme::TEXT))
+                .with_width(3.0),
         );
 
         // Current value in the middle of the knob.
         frame.fill_text(Text {
             content: format!("{:.0}%", value * 100.0),
             position: center,
-            color: theme::TEXT,
+            color: dim(theme::TEXT),
             size: 12.0.into(),
             align_x: iced::widget::text::Alignment::Center,
             align_y: iced::alignment::Vertical::Center,
