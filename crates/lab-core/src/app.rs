@@ -383,6 +383,8 @@ fn host_thread(
         .and_then(|i| i.access_handler(|h| h.timer_support().map(|ext| (h.timers.clone(), ext))));
     let mut last_stats = Instant::now();
     let mut last_busy_budget = (0u64, 0u64);
+    let mut last_callbacks = 0u64;
+    let mut stalled_for = 0u32;
     loop {
         if let Some(rx) = &host_rx
             && let Ok(HostThreadMessage::RunOnMainThread) =
@@ -491,8 +493,23 @@ fn host_thread(
             } else {
                 0.0
             };
+            // Stall watchdog: a started stream whose callback counter stops
+            // advancing has died underneath us (seen once on PipeWire).
+            // Automatic stream rebuild is Phase 7; for now, say it loudly.
+            let callbacks_now = stats.callbacks.load(Relaxed);
+            if callbacks_now == last_callbacks && callbacks_now > 0 {
+                stalled_for += 1;
+                if stalled_for == 3 {
+                    let _ = events.send(CoreEvent::Error(
+                        "audio stream stalled; restart benchlab to recover".to_string(),
+                    ));
+                }
+            } else {
+                stalled_for = 0;
+            }
+            last_callbacks = callbacks_now;
             let _ = events.send(CoreEvent::Stats {
-                callbacks: stats.callbacks.load(Relaxed),
+                callbacks: callbacks_now,
                 overruns: stats.overruns.load(Relaxed),
                 max_callback_ms: stats.max_callback_ns.load(Relaxed) as f64 / 1e6,
                 min_frames: stats.min_frames.load(Relaxed),
