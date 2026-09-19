@@ -7,8 +7,10 @@ Generated from hardware capture, not vendor documentation.
   `docs/capture-script.md`.
 - Firmware version: not recorded (TODO: read from MIDI Control Center or a
   device inquiry and note it here).
-- Port name: matched the default case-insensitive `"minilab"` filter
-  (exact ALSA name TODO: record output of `labctl ports`).
+- ALSA ports (recorded 2026-09-18 via `labctl ports`): the device exposes
+  four in/out pairs, `Minilab3:Minilab3 MIDI 36:0` (the one benchlab uses
+  for everything verified so far), `DIN THRU 36:1`, `MCU/HUI 36:2`, and
+  `ALV 36:3`. The default matcher is `"minilab3 midi"`.
 - User mode capture: not yet recorded.
 
 All channels are 0-based (MIDI status nibble), so "ch0" is MIDI channel 1 and
@@ -130,7 +132,6 @@ a protocol spec.
 ## Still to capture
 
 - User mode.
-- Exact ALSA port names from `labctl ports`.
 - Firmware version.
 - Whether the display reacted to anything during the DAW session (Phase 2
   will drive it with SysEx).

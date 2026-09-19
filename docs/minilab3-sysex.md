@@ -121,9 +121,15 @@ Seen in `docs/captures/arturia.cap` (see `minilab3-control-map.md`):
 
 | Message | Verified on hardware |
 |---|---|
-| Init | no |
-| Pad color (DAW prefix, temporary IDs) | no |
-| Display text two-line | no |
+| Init | sent without error 2026-09-18 (no independent effect observed) |
+| Pad color (DAW prefix, temporary IDs) | **yes**, 2026-09-18 via `labctl pad` |
+| Display text two-line | pending confirmation |
 | Pictogram / info / scrolling variants | no |
+
+Hardware notes (2026-09-18, DAW mode, via the `Minilab3 MIDI` ALSA port):
+
+- Pad colors set with the temporary bank A IDs **survive the pad being
+  tapped** in DAW mode. The gist's "lost when pressing the pad" caveat was
+  about User mode.
 
 Update this table as `labctl display` / `labctl pad` checklists come back.

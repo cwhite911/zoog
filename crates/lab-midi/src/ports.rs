@@ -5,9 +5,13 @@ use std::fmt;
 use midir::{MidiInput, MidiOutput};
 
 /// The default case-insensitive substring used to find the controller.
-/// Unverified until the Phase 1 capture confirms the actual ALSA port name;
-/// `labctl ports` lists what the system reports.
-pub const DEFAULT_PORT_MATCH: &str = "minilab";
+///
+/// The device exposes four ALSA port pairs (observed 2026-09-18):
+/// `Minilab3:Minilab3 MIDI 36:0`, `... DIN THRU 36:1`, `... MCU/HUI 36:2`,
+/// and `... ALV 36:3`. Notes, CCs, and the verified SysEx feedback all go
+/// through the `MIDI` port, so the matcher includes it to avoid depending
+/// on enumeration order.
+pub const DEFAULT_PORT_MATCH: &str = "minilab3 midi";
 
 #[derive(Debug)]
 pub enum MidiError {
@@ -71,5 +75,22 @@ mod tests {
         assert!(name_matches("Minilab3 MIDI In", "minilab"));
         assert!(name_matches("MINILAB3", "MiniLab"));
         assert!(!name_matches("Midi Through Port-0", "minilab"));
+    }
+
+    #[test]
+    fn default_match_selects_only_the_midi_port() {
+        // Real port names observed via `labctl ports` on 2026-09-18.
+        assert!(name_matches(
+            "Minilab3:Minilab3 MIDI 36:0",
+            DEFAULT_PORT_MATCH
+        ));
+        for other in [
+            "Minilab3:Minilab3 DIN THRU 36:1",
+            "Minilab3:Minilab3 MCU/HUI 36:2",
+            "Minilab3:Minilab3 ALV 36:3",
+            "Midi Through:Midi Through Port-0 14:0",
+        ] {
+            assert!(!name_matches(other, DEFAULT_PORT_MATCH));
+        }
     }
 }
