@@ -95,6 +95,11 @@ program via Shift+Pad3 (the Shift CC there, 27, matches the DAW capture):
 
 127 press / 0 release (Tap once sent 68 as its press value).
 
+These are remote-control buttons: the device has no transport or looper of
+its own, it only transmits these CCs for host software to act on. benchlab
+types them as `Transport` events and currently ignores them (a phrase
+looper behind them is a Phase 8 candidate).
+
 ## Shift + pads (mode row, Arturia mode)
 
 The pads' Shift row is labeled Arp, Pad, Prog, plus transport functions.
