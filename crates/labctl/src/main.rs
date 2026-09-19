@@ -43,6 +43,10 @@ USAGE:
     labctl plugins
         Scan the CLAP search paths and list every plugin found.
 
+    labctl params [--plugin MATCH] [--find SUBSTR]
+        List a plugin's parameters (default plugin: \"Surge XT\"), optionally
+        filtered by a case-insensitive substring of the name or module.
+
     labctl play [--plugin MATCH] [--rate HZ] [--frames N]
         Load a CLAP plugin (default match: \"surge\"), connect the
         controller's notes to it, and play. Prints callback stats every 5
@@ -57,6 +61,7 @@ fn main() -> ExitCode {
         Some("display") => cmd_display(&args[1..]),
         Some("pad") => cmd_pad(&args[1..]),
         Some("plugins") => cmd_plugins(),
+        Some("params") => cmd_params(&args[1..]),
         Some("play") => cmd_play(&args[1..]),
         Some("--help" | "-h" | "help") | None => {
             print!("{USAGE}");
@@ -212,6 +217,85 @@ fn cmd_plugins() -> ExitCode {
         println!("{plugin}\n    {}", plugin.path.display());
     }
     ExitCode::SUCCESS
+}
+
+fn cmd_params(args: &[String]) -> ExitCode {
+    let mut plugin_match = "Surge XT".to_string();
+    let mut find: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--plugin" => match it.next() {
+                Some(v) => plugin_match = v.clone(),
+                None => {
+                    eprintln!("labctl params: --plugin needs a value");
+                    return ExitCode::from(2);
+                }
+            },
+            "--find" => match it.next() {
+                Some(v) => find = Some(v.to_lowercase()),
+                None => {
+                    eprintln!("labctl params: --find needs a value");
+                    return ExitCode::from(2);
+                }
+            },
+            other => {
+                eprintln!("labctl params: unknown argument {other:?}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    match run_params(&plugin_match, find.as_deref()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("labctl params: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_params(plugin_match: &str, find: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    use lab_engine::host::{BenchHost, BenchHostMainThread, BenchHostShared, host_info};
+
+    let plugin = lab_engine::discovery::find_plugin(plugin_match)?;
+    let (host_tx, _host_rx) = channel();
+    let plugin_id = std::ffi::CString::new(plugin.id.as_str())?;
+    let mut instance = lab_engine::clack_host::prelude::PluginInstance::<BenchHost>::new(
+        |_| BenchHostShared::new(host_tx),
+        |_| BenchHostMainThread::new(),
+        &plugin.entry,
+        &plugin_id,
+        &host_info(),
+    )?;
+
+    let params = lab_engine::params::list_params(&mut instance);
+    println!("{plugin}: {} parameters", params.len());
+    for p in params.iter().filter(|p| {
+        find.is_none_or(|f| {
+            p.name.to_lowercase().contains(f) || p.module.to_lowercase().contains(f)
+        })
+    }) {
+        let value = match (&p.value_text, p.value) {
+            (Some(text), _) => text.clone(),
+            (None, Some(v)) => format!("{v}"),
+            (None, None) => "?".to_string(),
+        };
+        println!(
+            "  id={:<10} {:<40} [{}..{}] default={} value={} {}",
+            p.id,
+            format!("{}/{}", p.module, p.name),
+            p.min_value,
+            p.max_value,
+            p.default_value,
+            value,
+            if p.is_automatable {
+                ""
+            } else {
+                "(not automatable)"
+            },
+        );
+    }
+    Ok(())
 }
 
 struct PlayArgs {
