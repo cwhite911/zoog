@@ -121,9 +121,9 @@ Seen in `docs/captures/arturia.cap` (see `minilab3-control-map.md`):
 
 | Message | Verified on hardware |
 |---|---|
-| Init | sent without error 2026-09-18 (no independent effect observed) |
-| Pad color (DAW prefix, temporary IDs) | **yes**, 2026-09-18 via `labctl pad` |
-| Display text two-line | pending confirmation |
+| Init | sent before display text, which worked (not tested in isolation) |
+| Pad color (DAW prefix, temporary IDs) | **yes**, 2026-09-18 via `labctl pad`; pad ID ordering confirmed left-to-right |
+| Display text two-line | **yes**, 2026-09-18 via `labctl display` |
 | Pictogram / info / scrolling variants | no |
 
 Hardware notes (2026-09-18, DAW mode, via the `Minilab3 MIDI` ALSA port):
