@@ -29,6 +29,7 @@ pub trait Device {
 /// mpsc channel; the callback does nothing else.
 pub struct MidirDevice {
     input_port_name: String,
+    input_port_id: String,
     // Held to keep the connection alive.
     _input: MidiInputConnection<Sender<TimedMessage>>,
     output: Option<MidiOutputConnection>,
@@ -60,6 +61,7 @@ impl MidirDevice {
         let input_port_name = input
             .port_name(&in_port)
             .map_err(|e| MidiError::Connect(e.to_string()))?;
+        let input_port_id = in_port.id();
 
         let (tx, rx) = channel();
         let connection = input
@@ -80,6 +82,7 @@ impl MidirDevice {
 
         Ok(MidirDevice {
             input_port_name,
+            input_port_id,
             _input: connection,
             output,
             rx,
@@ -109,6 +112,11 @@ impl MidirDevice {
     /// The full name of the connected input port.
     pub fn input_port_name(&self) -> &str {
         &self.input_port_name
+    }
+
+    /// The opaque id of the connected input port (changes on re-enumeration).
+    pub fn input_port_id(&self) -> &str {
+        &self.input_port_id
     }
 
     /// Whether an output port was found (needed for device feedback).

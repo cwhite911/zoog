@@ -7,7 +7,7 @@
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
 use clack_extensions::audio_ports::{AudioPortFlags, AudioPortInfoBuffer, PluginAudioPorts};
@@ -57,6 +57,10 @@ pub struct AudioStats {
     /// Total frame-time budget of all processed blocks, in nanoseconds.
     /// busy/budget is the DSP load.
     pub budget_ns: AtomicU64,
+    /// Peak absolute output sample since last read, as f32 bits.
+    /// Readers swap in 0 to consume; the callback does fetch_max on bits,
+    /// which orders correctly for non-negative floats.
+    pub peak_bits: AtomicU32,
 }
 
 /// The negotiated audio stream, for display.
@@ -249,6 +253,20 @@ impl PluginBuffers {
         }
     }
 
+    /// Peak absolute sample of the main output port over `frames`.
+    pub fn main_output_peak(&self, frames: usize) -> f32 {
+        let main = &self.output_channels[self.layout_out.main_port];
+        let channels = self.layout_out.main_channel_count() as usize;
+        let mut peak = 0.0f32;
+        for ch in 0..channels {
+            let start = ch * self.max_frames;
+            for &s in &main[start..start + frames] {
+                peak = peak.max(s.abs());
+            }
+        }
+        peak
+    }
+
     /// RMS of the main output port over `frames`, for the offline test.
     pub fn main_output_rms(&self, frames: usize) -> f64 {
         let main = &self.output_channels[self.layout_out.main_port];
@@ -302,7 +320,13 @@ impl StreamProcessor {
             Some(self.steady_counter),
             None,
         ) {
-            Ok(_) => self.buffers.write_main_to_stereo(frames, data),
+            Ok(_) => {
+                self.buffers.write_main_to_stereo(frames, data);
+                let peak = self.buffers.main_output_peak(frames);
+                self.stats
+                    .peak_bits
+                    .fetch_max(peak.to_bits(), Ordering::Relaxed);
+            }
             Err(_) => data.fill(S::EQUILIBRIUM),
         }
         self.steady_counter += frames as u64;

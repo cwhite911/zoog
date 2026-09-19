@@ -66,6 +66,23 @@ pub fn name_matches(port_name: &str, matcher: &str) -> bool {
     port_name.to_lowercase().contains(&matcher.to_lowercase())
 }
 
+/// The opaque unique id of the first input port matching `matcher`, or
+/// `None` when absent. The id changes when the device re-enumerates (e.g.
+/// USB replug), which is how stale connections are detected.
+pub fn find_input_port_id(client_name: &str, matcher: &str) -> Result<Option<String>, MidiError> {
+    let input = MidiInput::new(client_name).map_err(|e| MidiError::Init(e.to_string()))?;
+    Ok(input
+        .ports()
+        .into_iter()
+        .find(|p| {
+            input
+                .port_name(p)
+                .map(|n| name_matches(&n, matcher))
+                .unwrap_or(false)
+        })
+        .map(|p| p.id()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

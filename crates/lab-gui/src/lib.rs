@@ -55,17 +55,44 @@ impl Boot {
             library_path: None,
             mock_device: self.mock_device,
             stub_engine: self.stub_engine,
+            restore_session: true,
         }
     }
 }
 
 pub fn run(boot: Boot) -> iced::Result {
+    let size = load_window_size().unwrap_or((1100.0, 720.0));
     iced::application(move || App::new(boot.clone()), App::update, App::view)
         .title(app_title)
         .subscription(App::subscription)
         .theme(app_theme)
-        .window_size((1100.0, 720.0))
+        .window_size(size)
         .run()
+}
+
+fn window_state_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .map(|base| base.join("benchlab").join("window"))
+}
+
+fn load_window_size() -> Option<(f32, f32)> {
+    let text = std::fs::read_to_string(window_state_path()?).ok()?;
+    let mut parts = text.split_whitespace().map(str::parse::<f32>);
+    match (parts.next(), parts.next()) {
+        (Some(Ok(w)), Some(Ok(h))) if w >= 400.0 && h >= 300.0 => Some((w, h)),
+        _ => None,
+    }
+}
+
+fn save_window_size(size: iced::Size) {
+    if let Some(path) = window_state_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, format!("{} {}", size.width, size.height));
+    }
 }
 
 fn project_controls(controls: &[lab_core::app::ControlInfo]) -> Vec<ControlView> {
@@ -100,6 +127,7 @@ pub enum Message {
     ToggleFavorite(i64),
     ControlDragged(Control, f64),
     Key(keyboard::Event),
+    WindowResized(iced::Size),
     OpenSettings(bool),
     Rescan,
 }
@@ -118,6 +146,7 @@ struct Stats {
     max_frames: u64,
     stream_errors: u64,
     dsp_load: f64,
+    output_peak: f32,
 }
 
 struct App {
@@ -265,6 +294,7 @@ impl App {
                     }
                 }
             }
+            Message::WindowResized(size) => save_window_size(size),
             Message::OpenSettings(open) => {
                 self.page = if open { Page::Settings } else { Page::Main };
             }
@@ -312,6 +342,7 @@ impl App {
                 }
             }
             CoreEvent::BrowserSelected { id } => self.selected = Some(id),
+            CoreEvent::DeviceConnected(connected) => self.device_connected = connected,
             CoreEvent::ControlsRebound { controls } => {
                 self.control_views = project_controls(&controls);
             }
@@ -330,6 +361,7 @@ impl App {
                 max_frames,
                 stream_errors,
                 dsp_load,
+                output_peak,
             } => {
                 self.stats = Stats {
                     overruns,
@@ -338,6 +370,7 @@ impl App {
                     max_frames,
                     stream_errors,
                     dsp_load,
+                    output_peak,
                 };
             }
             CoreEvent::Error(e) => self.last_error = Some(e),
@@ -348,6 +381,7 @@ impl App {
         Subscription::batch([
             Subscription::run_with(self.boot.clone(), core_stream),
             keyboard::listen().map(Message::Key),
+            iced::window::resize_events().map(|(_, size)| Message::WindowResized(size)),
         ])
     }
 
@@ -478,8 +512,18 @@ impl App {
             (None, true) => "audio".to_string(),
             (None, false) => "no audio (stub)".to_string(),
         };
+        let meter = {
+            let peak = self.stats.output_peak;
+            let db = if peak > 0.0 {
+                format!("{:>5.1} dB", 20.0 * peak.log10())
+            } else {
+                "  -inf".to_string()
+            };
+            let bars = (peak.clamp(0.0, 1.0) * 8.0).round() as usize;
+            format!("out [{}{}] {db}", "#".repeat(bars), "-".repeat(8 - bars))
+        };
         let status = format!(
-            "MIDI: {}   {}   dsp {:>4.1}%   frames {}..{}   overruns {}   max {:.2} ms   stream errors {}{}",
+            "MIDI: {}   {}   {meter}   dsp {:>4.1}%   frames {}..{}   overruns {}   max {:.2} ms   stream errors {}{}",
             if self.device_connected {
                 "connected"
             } else {

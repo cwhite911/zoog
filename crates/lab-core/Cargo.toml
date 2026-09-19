@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+directories = "6.0.0"
 lab-engine = { version = "0.1.0", path = "../lab-engine" }
 lab-library = { version = "0.1.0", path = "../lab-library" }
 lab-midi = { version = "0.1.0", path = "../lab-midi" }

@@ -421,6 +421,14 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             CoreEvent::PresetLoaded { name, .. } => println!("loaded preset {name:?}"),
+            CoreEvent::DeviceConnected(connected) => println!(
+                "controller {}",
+                if connected {
+                    "connected"
+                } else {
+                    "disconnected"
+                }
+            ),
             CoreEvent::PresetLoadFailed { name } => println!("preset load FAILED: {name:?}"),
             CoreEvent::Stats {
                 callbacks,
@@ -430,11 +438,12 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
                 max_frames,
                 stream_errors,
                 dsp_load,
+                output_peak,
             } => {
                 if last_stats.elapsed() >= Duration::from_secs(5) {
                     last_stats = std::time::Instant::now();
                     println!(
-                        "callbacks={callbacks} overruns={overruns} max_callback={max_callback_ms:.2}ms dsp={:.1}% frames={min_frames}..{max_frames} stream_errors={stream_errors}",
+                        "callbacks={callbacks} overruns={overruns} max_callback={max_callback_ms:.2}ms dsp={:.1}% peak={output_peak:.3} frames={min_frames}..{max_frames} stream_errors={stream_errors}",
                         dsp_load * 100.0
                     );
                 }

@@ -1721,6 +1721,7 @@ dependencies = [
 name = "lab-core"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "lab-engine",
  "lab-library",
  "lab-midi",

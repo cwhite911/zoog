@@ -44,6 +44,8 @@ pub struct CoreConfig {
     pub mock_device: bool,
     /// Skip plugin and audio entirely (stub engine).
     pub stub_engine: bool,
+    /// Reload the last-used preset at startup.
+    pub restore_session: bool,
 }
 
 impl Default for CoreConfig {
@@ -56,6 +58,41 @@ impl Default for CoreConfig {
             library_path: None,
             mock_device: false,
             stub_engine: false,
+            restore_session: true,
+        }
+    }
+}
+
+/// Path of the session state file (`~/.config/benchlab/session.toml`).
+fn session_path() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "benchlab")
+        .map(|dirs| dirs.config_dir().join("session.toml"))
+}
+
+/// Persisted session state. Kept tiny and rewritten on every preset load so
+/// a crash loses at most the current selection (PLAN.md Phase 7 panic
+/// safety: save often, restart cleanly).
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct SessionState {
+    last_preset: Option<i64>,
+}
+
+impl SessionState {
+    fn load() -> Self {
+        session_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|text| toml::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self) {
+        if let Some(path) = session_path() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(text) = toml::to_string(self) {
+                let _ = std::fs::write(path, text);
+            }
         }
     }
 }
@@ -149,6 +186,8 @@ pub enum CoreEvent {
     ControlsRebound {
         controls: Vec<ControlInfo>,
     },
+    /// The hardware controller connected or disconnected (hotplug).
+    DeviceConnected(bool),
     /// Library rescan finished; fresh preset list attached.
     LibraryRescanned {
         presets: Vec<PresetInfo>,
@@ -164,6 +203,8 @@ pub enum CoreEvent {
         /// Fraction of the frame-time budget spent in process() since the
         /// previous stats event (0.0..~1.0).
         dsp_load: f64,
+        /// Peak absolute output sample since the previous stats event.
+        output_peak: f32,
     },
     Error(String),
 }
@@ -226,6 +267,11 @@ enum ToControl {
     GuiControl {
         control: Control,
         normalized: f64,
+    },
+    /// Fresh ring-buffer producers after an audio stream rebuild.
+    Rings {
+        midi: rtrb::Producer<RtMidi>,
+        params: rtrb::Producer<ParamChange>,
     },
 }
 
@@ -305,21 +351,22 @@ fn host_thread(
         })
         .collect();
 
-    // Device.
-    let device: Option<Box<dyn Device + Send>> = if config.mock_device {
-        Some(Box::new(MockDevice::new()))
+    // Device: the control thread always runs; with real hardware it owns
+    // reconnect polling (hotplug and stale-session recovery).
+    let device = if config.mock_device {
+        DeviceSlot::Mock(MockDevice::new())
     } else {
         match MidirDevice::open(CLIENT_NAME, DEFAULT_PORT_MATCH) {
-            Ok(device) => Some(Box::new(device)),
+            Ok(device) => DeviceSlot::Hardware(Some(device)),
             Err(e) => {
                 let _ = events.send(CoreEvent::Error(format!(
-                    "no controller ({e}); running without hardware"
+                    "no controller ({e}); waiting for hotplug"
                 )));
-                None
+                DeviceSlot::Hardware(None)
             }
         }
     };
-    let device_connected = device.is_some();
+    let device_connected = device.is_connected();
 
     // Rings and channels.
     let (midi_producer, midi_consumer) = rtrb::RingBuffer::<RtMidi>::new(1024);
@@ -328,7 +375,7 @@ fn host_thread(
     let (to_control_tx, to_control_rx) = channel::<ToControl>();
 
     // Control thread.
-    if let Some(device) = device {
+    {
         let ctx = ControlThread {
             device,
             map: if config.arturia_mode {
@@ -376,6 +423,23 @@ fn host_thread(
         controls: control_infos,
         audio: audio_info,
     });
+
+    // Session restore: reload the last-used preset.
+    if config.restore_session
+        && let Some(id) = SessionState::load().last_preset
+        && let Ok(Some(row)) = library.get(id)
+    {
+        do_load_preset(
+            instance.as_mut(),
+            &library,
+            events,
+            &to_control_tx,
+            row.id,
+            row.name,
+            row.path,
+            row.load_key,
+        );
+    }
 
     // Main service loop.
     let timers = instance
@@ -495,19 +559,18 @@ fn host_thread(
             };
             // Stall watchdog: a started stream whose callback counter stops
             // advancing has died underneath us (seen once on PipeWire).
-            // Automatic stream rebuild is Phase 7; for now, say it loudly.
             let callbacks_now = stats.callbacks.load(Relaxed);
             if callbacks_now == last_callbacks && callbacks_now > 0 {
                 stalled_for += 1;
-                if stalled_for == 3 {
-                    let _ = events.send(CoreEvent::Error(
-                        "audio stream stalled; restart benchlab to recover".to_string(),
-                    ));
-                }
             } else {
                 stalled_for = 0;
             }
             last_callbacks = callbacks_now;
+            let output_peak = f32::from_bits(
+                stats
+                    .peak_bits
+                    .swap(0, std::sync::atomic::Ordering::Relaxed),
+            );
             let _ = events.send(CoreEvent::Stats {
                 callbacks: callbacks_now,
                 overruns: stats.overruns.load(Relaxed),
@@ -516,7 +579,53 @@ fn host_thread(
                 max_frames: stats.max_frames.load(Relaxed),
                 stream_errors: stats.stream_errors.load(Relaxed),
                 dsp_load,
+                output_peak,
             });
+        }
+
+        // Rebuild a stalled stream: drop it (which drops the audio
+        // processor), deactivate the plugin, and activate onto fresh ring
+        // buffers whose producers are handed to the control thread.
+        if stalled_for >= 3 {
+            stalled_for = 0;
+            last_callbacks = 0;
+            last_busy_budget = (0, 0);
+            let _ = events.send(CoreEvent::Error(
+                "audio stream stalled; rebuilding".to_string(),
+            ));
+            _stream = None;
+            stats = None;
+            if let Some(instance) = instance.as_mut() {
+                if let Err(e) = instance.try_deactivate() {
+                    let _ = events.send(CoreEvent::Error(format!(
+                        "plugin deactivation failed: {e}; restart benchlab"
+                    )));
+                    continue;
+                }
+                let (midi_producer, midi_consumer) = rtrb::RingBuffer::<RtMidi>::new(1024);
+                let (param_producer, param_consumer) = rtrb::RingBuffer::<ParamChange>::new(256);
+                match activate_to_stream(
+                    instance,
+                    midi_consumer,
+                    Some(param_consumer),
+                    config.engine,
+                ) {
+                    Ok((stream, audio_stats, _info)) => {
+                        _stream = Some(stream);
+                        stats = Some(audio_stats);
+                        let _ = to_control_tx.send(ToControl::Rings {
+                            midi: midi_producer,
+                            params: param_producer,
+                        });
+                        let _ = events.send(CoreEvent::Error("audio stream rebuilt".to_string()));
+                    }
+                    Err(e) => {
+                        let _ = events.send(CoreEvent::Error(format!(
+                            "audio stream rebuild failed: {e}"
+                        )));
+                    }
+                }
+            }
         }
     }
 }
@@ -549,10 +658,22 @@ fn bind_mapping(
     params: &[ParamDescription],
     events: &Sender<CoreEvent>,
 ) -> (Option<MacroControls>, Vec<ControlInfo>) {
-    let path = config
-        .mapping_path
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("mappings/surge-xt.toml"));
+    // Search order: explicit path, working directory (development),
+    // user config, system install location (.deb).
+    let path = config.mapping_path.clone().or_else(|| {
+        let mut candidates = vec![PathBuf::from("mappings/surge-xt.toml")];
+        if let Some(dirs) = directories::ProjectDirs::from("", "", "benchlab") {
+            candidates.push(dirs.config_dir().join("mappings/surge-xt.toml"));
+        }
+        candidates.push(PathBuf::from("/usr/share/benchlab/mappings/surge-xt.toml"));
+        candidates.into_iter().find(|p| p.exists())
+    });
+    let Some(path) = path else {
+        let _ = events.send(CoreEvent::Error(
+            "no mapping file found; encoders and faders inactive".to_string(),
+        ));
+        return (None, Vec::new());
+    };
     if !path.exists() {
         let _ = events.send(CoreEvent::Error(format!(
             "no mapping file at {}; encoders and faders inactive",
@@ -675,6 +796,10 @@ fn do_load_preset(
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
             let _ = library.touch_last_used(id, now_s);
+            SessionState {
+                last_preset: Some(id),
+            }
+            .save();
             let _ = to_control.send(ToControl::PresetLoaded {
                 name: name.clone(),
                 params,
@@ -691,9 +816,33 @@ fn do_load_preset(
     }
 }
 
+/// The control thread's device: a fixed mock, or hardware that may be
+/// absent and is reconnected by polling.
+enum DeviceSlot {
+    Mock(MockDevice),
+    Hardware(Option<MidirDevice>),
+}
+
+impl DeviceSlot {
+    fn is_connected(&self) -> bool {
+        match self {
+            DeviceSlot::Mock(_) => true,
+            DeviceSlot::Hardware(device) => device.is_some(),
+        }
+    }
+
+    fn device_mut(&mut self) -> Option<&mut (dyn Device + Send)> {
+        match self {
+            DeviceSlot::Mock(mock) => Some(mock),
+            DeviceSlot::Hardware(Some(device)) => Some(device),
+            DeviceSlot::Hardware(None) => None,
+        }
+    }
+}
+
 /// State owned by the device control thread.
 struct ControlThread {
-    device: Box<dyn Device + Send>,
+    device: DeviceSlot,
     map: ControlMap,
     controls: Option<MacroControls>,
     browser: Browser,
@@ -707,20 +856,85 @@ struct ControlThread {
 
 impl ControlThread {
     fn show(&mut self, line1: &str, line2: &str) {
-        let _ = self.device.send(&display_text(line1, line2));
+        if let Some(device) = self.device.device_mut() {
+            let _ = device.send(&display_text(line1, line2));
+        }
+    }
+
+    /// Sends the init handshake and the current title to a (re)connected
+    /// device.
+    fn greet_device(&mut self) {
+        if let Some(device) = self.device.device_mut() {
+            let _ = device.send(&init());
+        }
+        let title = self.title.clone();
+        self.show(&title, "");
+    }
+
+    /// Hotplug maintenance for hardware devices. Detects disappearance AND
+    /// silent re-enumeration (same name, new port id: the stale-session
+    /// failure observed on hardware), reconnects when the port is back.
+    /// Returns true if the connection state changed.
+    fn maintain_hardware(&mut self) -> bool {
+        let DeviceSlot::Hardware(slot) = &mut self.device else {
+            return false;
+        };
+        let current_id =
+            lab_midi::ports::find_input_port_id(CLIENT_NAME, DEFAULT_PORT_MATCH).unwrap_or(None);
+        match (slot.as_ref(), current_id) {
+            // Connected and the port id still matches: healthy.
+            (Some(device), Some(id)) if device.input_port_id() == id => false,
+            // Gone, or re-enumerated under a new id: drop and maybe reopen.
+            (Some(_), current) => {
+                *slot = None;
+                if current.is_some()
+                    && let Ok(device) = MidirDevice::open(CLIENT_NAME, DEFAULT_PORT_MATCH)
+                {
+                    *slot = Some(device);
+                    let _ = self.events.send(CoreEvent::DeviceConnected(true));
+                    self.greet_device();
+                } else {
+                    let _ = self.events.send(CoreEvent::DeviceConnected(false));
+                }
+                true
+            }
+            // Absent and still absent.
+            (None, None) => false,
+            // Absent but a port appeared: connect.
+            (None, Some(_)) => match MidirDevice::open(CLIENT_NAME, DEFAULT_PORT_MATCH) {
+                Ok(device) => {
+                    *slot = Some(device);
+                    let _ = self.events.send(CoreEvent::DeviceConnected(true));
+                    self.greet_device();
+                    true
+                }
+                Err(_) => false,
+            },
+        }
     }
 
     fn run(mut self) {
         let mut coalescer: Coalescer<(String, String)> = Coalescer::new(Duration::from_millis(33));
         let mut revert_at: Option<Instant> = None;
+        let mut last_hotplug_check = Instant::now();
 
-        let _ = self.device.send(&init());
-        let title = self.title.clone();
-        self.show(&title, "");
+        self.greet_device();
 
         loop {
             let now = Instant::now();
-            if let Some(msg) = self.device.recv_timeout(Duration::from_millis(50)) {
+            // The presence probe opens a fresh ALSA client, so throttle it.
+            if now.duration_since(last_hotplug_check) >= Duration::from_secs(2) {
+                last_hotplug_check = now;
+                self.maintain_hardware();
+            }
+            let received = match self.device.device_mut() {
+                Some(device) => device.recv_timeout(Duration::from_millis(50)),
+                None => {
+                    thread::sleep(Duration::from_millis(200));
+                    None
+                }
+            };
+            if let Some(msg) = received {
                 match self.map.map(MidiMessage::decode(&msg.bytes)) {
                     event @ (DeviceEvent::NoteOn { .. }
                     | DeviceEvent::NoteOff { .. }
@@ -825,6 +1039,10 @@ impl ControlThread {
                     ToControl::PresetLoadFailed { name } => {
                         self.show("Load failed", &name);
                         revert_at = Some(now + Duration::from_secs(2));
+                    }
+                    ToControl::Rings { midi, params } => {
+                        self.midi_producer = midi;
+                        self.param_producer = params;
                     }
                     ToControl::GuiControl {
                         control,

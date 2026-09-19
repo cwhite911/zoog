@@ -3,6 +3,7 @@ name = "lab-gui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Sound browser and CLAP host for the Arturia MiniLab 3"
 
 [dependencies]
 iced = { version = "0.14.0", features = ["canvas", "tokio"] }
@@ -11,3 +12,23 @@ lab-core = { version = "0.1.0", path = "../lab-core" }
 [[bin]]
 name = "benchlab"
 path = "src/main.rs"
+
+[package.metadata.deb]
+name = "benchlab"
+copyright = "2026 Corey T. White"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+Native sound browser and host for the Arturia MiniLab 3. Browse a tagged \
+preset library from the GUI or the hardware, play CLAP instruments (Surge \
+XT first) with low latency, and control macros from the encoders and \
+faders with display feedback. Not affiliated with or endorsed by Arturia."""
+depends = "$auto"
+section = "sound"
+priority = "optional"
+assets = [
+    ["target/release/benchlab", "usr/bin/", "755"],
+    ["target/release/labctl", "usr/bin/", "755"],
+    ["../../packaging/benchlab.desktop", "usr/share/applications/", "644"],
+    ["../../mappings/surge-xt.toml", "usr/share/benchlab/mappings/", "644"],
+    ["../../README.md", "usr/share/doc/benchlab/README", "644"],
+]
