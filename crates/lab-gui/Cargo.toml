@@ -6,7 +6,7 @@ license.workspace = true
 description = "Sound browser and CLAP host for the Arturia MiniLab 3"
 
 [dependencies]
-iced = { version = "0.14.0", features = ["canvas", "tokio"] }
+iced = { version = "0.14.0", features = ["canvas", "image", "tokio"] }
 lab-core = { version = "0.1.0", path = "../lab-core" }
 
 [[bin]]
@@ -29,6 +29,10 @@ assets = [
     ["target/release/benchlab", "usr/bin/", "755"],
     ["target/release/labctl", "usr/bin/", "755"],
     ["../../packaging/benchlab.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/benchlab.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["assets/benchlab-256.png", "usr/share/icons/hicolor/256x256/apps/benchlab.png", "644"],
+    ["../../packaging/benchlab-128.png", "usr/share/icons/hicolor/128x128/apps/benchlab.png", "644"],
+    ["../../packaging/benchlab-48.png", "usr/share/icons/hicolor/48x48/apps/benchlab.png", "644"],
     ["../../mappings/surge-xt.toml", "usr/share/benchlab/mappings/", "644"],
     ["../../README.md", "usr/share/doc/benchlab/README", "644"],
 ]

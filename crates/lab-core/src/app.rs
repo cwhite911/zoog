@@ -25,7 +25,7 @@ use lab_midi::device::{Device, MidirDevice, MockDevice};
 use lab_midi::event::{ControlMap, DeviceEvent, MidiMessage};
 use lab_midi::ports::DEFAULT_PORT_MATCH;
 use lab_midi::rate::Coalescer;
-use lab_midi::sysex::{display_text, init};
+use lab_midi::sysex::{ColorTarget, display_text, init, pad_color};
 
 use crate::browser::{BrowseItem, Browser};
 use crate::mapping::{Control, MacroControls, MappingFile};
@@ -879,11 +879,16 @@ impl ControlThread {
         }
     }
 
-    /// Sends the init handshake and the current title to a (re)connected
-    /// device.
+    /// Sends the init handshake, benchlab's pad wash, and the current
+    /// title to a (re)connected device.
     fn greet_device(&mut self) {
         if let Some(device) = self.device.device_mut() {
             let _ = device.send(&init());
+            // A dim blue wash on all pads marks "benchlab connected"
+            // (temporary colors, verified to survive taps in DAW mode).
+            for pad in 0..8 {
+                let _ = device.send(&pad_color(ColorTarget::PadTemporary(pad), 6, 28, 44));
+            }
         }
         let title = self.title.clone();
         self.show(&title, "");

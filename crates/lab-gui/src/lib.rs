@@ -61,12 +61,18 @@ impl Boot {
 }
 
 pub fn run(boot: Boot) -> iced::Result {
-    let size = load_window_size().unwrap_or((1100.0, 720.0));
+    let (width, height) = load_window_size().unwrap_or((1100.0, 720.0));
+    let icon =
+        iced::window::icon::from_file_data(include_bytes!("../assets/benchlab-256.png"), None).ok();
     iced::application(move || App::new(boot.clone()), App::update, App::view)
         .title(app_title)
         .subscription(App::subscription)
         .theme(app_theme)
-        .window_size(size)
+        .window(iced::window::Settings {
+            size: iced::Size::new(width, height),
+            icon,
+            ..iced::window::Settings::default()
+        })
         .run()
 }
 
@@ -172,6 +178,10 @@ struct App {
 }
 
 const ALL_CATEGORIES: &str = "All";
+/// Scrollable id for the preset list (hardware browsing scroll-follow).
+const PRESET_LIST_ID: &str = "preset-list";
+/// Estimated preset row height, for scroll-follow positioning.
+const ROW_HEIGHT: f32 = 33.0;
 /// Rows rendered at once; refine the search to see the rest.
 const MAX_VISIBLE_ROWS: usize = 200;
 
@@ -249,7 +259,7 @@ impl App {
                 self.last_error = Some("core stopped".to_string());
                 self.engine_running = false;
             }
-            Message::Core(event) => self.on_core_event(event),
+            Message::Core(event) => return self.on_core_event(event),
             Message::SearchChanged(search) => self.search = search,
             Message::CategorySelected(category) => self.category = category,
             Message::FavoritesOnly(on) => self.favorites_only = on,
@@ -303,7 +313,23 @@ impl App {
         Task::none()
     }
 
-    fn on_core_event(&mut self, event: CoreEvent) {
+    fn scroll_to_selected(&self) -> Task<Message> {
+        let Some(id) = self.selected else {
+            return Task::none();
+        };
+        let Some(index) = self.filtered().iter().position(|p| p.id == id) else {
+            return Task::none();
+        };
+        // Only rows within the render cap are reachable.
+        let index = index.min(MAX_VISIBLE_ROWS);
+        let y = (index as f32 * ROW_HEIGHT - 150.0).max(0.0);
+        iced::widget::operation::scroll_to(
+            iced::widget::Id::new(PRESET_LIST_ID),
+            iced::widget::operation::AbsoluteOffset { x: 0.0, y },
+        )
+    }
+
+    fn on_core_event(&mut self, event: CoreEvent) -> Task<Message> {
         match event {
             CoreEvent::Ready {
                 plugin_title,
@@ -341,7 +367,10 @@ impl App {
                     *pad = down;
                 }
             }
-            CoreEvent::BrowserSelected { id } => self.selected = Some(id),
+            CoreEvent::BrowserSelected { id } => {
+                self.selected = Some(id);
+                return self.scroll_to_selected();
+            }
             CoreEvent::DeviceConnected(connected) => self.device_connected = connected,
             CoreEvent::ControlsRebound { controls } => {
                 self.control_views = project_controls(&controls);
@@ -375,6 +404,7 @@ impl App {
             }
             CoreEvent::Error(e) => self.last_error = Some(e),
         }
+        Task::none()
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -468,7 +498,7 @@ impl App {
             text(format!("{total} presets"))
                 .size(12)
                 .color(theme::TEXT_DIM),
-            scrollable(list).height(Fill).width(Fill),
+            scrollable(list).id(PRESET_LIST_ID).height(Fill).width(Fill),
         ]
         .spacing(6)
         .width(Fill);
