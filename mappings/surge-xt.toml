@@ -1,0 +1,84 @@
+# Macro mapping for Surge XT (org.surge-synth-team.surge-xt).
+#
+# Param ids observed from the installed plugin (Surge XT 1.3.4) via
+# `labctl params`, 2026-09-18. Names are informational and serve as the
+# fallback lookup: exact match first, then prefix (macro display names
+# change when a patch renames them, so the "M1:" prefix is what stays
+# stable).
+#
+# Encoders 1..8: Surge's 8 patch macros (PLAN.md Phase 4 default).
+# Faders 1..4: scene A amp envelope A/D/S/R (confirmed by Corey).
+
+plugin-id = "org.surge-synth-team.surge-xt"
+
+[[encoder]]
+index = 1
+label = "Macro 1"
+param-id = 825615485
+param-name = "M1:"
+
+[[encoder]]
+index = 2
+label = "Macro 2"
+param-id = 825615486
+param-name = "M2:"
+
+[[encoder]]
+index = 3
+label = "Macro 3"
+param-id = 825615487
+param-name = "M3:"
+
+[[encoder]]
+index = 4
+label = "Macro 4"
+param-id = 825615488
+param-name = "M4:"
+
+[[encoder]]
+index = 5
+label = "Macro 5"
+param-id = 825615489
+param-name = "M5:"
+
+[[encoder]]
+index = 6
+label = "Macro 6"
+param-id = 825615490
+param-name = "M6:"
+
+[[encoder]]
+index = 7
+label = "Macro 7"
+param-id = 825615491
+param-name = "M7:"
+
+[[encoder]]
+index = 8
+label = "Macro 8"
+param-id = 825615492
+param-name = "M8:"
+
+[[fader]]
+index = 1
+label = "Attack"
+param-id = 2005836581
+param-name = "A Amp EG Attack"
+
+[[fader]]
+index = 2
+label = "Decay"
+param-id = 3946337085
+param-name = "A Amp EG Decay"
+
+[[fader]]
+index = 3
+label = "Sustain"
+param-id = 874858726
+param-name = "A Amp EG Sustain"
+
+[[fader]]
+index = 4
+label = "Release"
+param-id = 3817344714
+param-name = "A Amp EG Release"

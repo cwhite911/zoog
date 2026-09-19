@@ -8,3 +8,4 @@ license.workspace = true
 lab-midi = { path = "../lab-midi" }
 lab-engine = { path = "../lab-engine" }
 rtrb = "0.4.0"
+lab-core = { version = "0.1.0", path = "../lab-core" }

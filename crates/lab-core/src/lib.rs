@@ -1,2 +1,5 @@
-//! App state machine and macro mapping; glue between midi, engine, and
-//! library. Populated incrementally from Phase 3 on.
+//! App state machine and macro mapping; glue between lab-midi, lab-engine,
+//! and lab-library.
+
+pub mod mapping;
+pub mod takeover;

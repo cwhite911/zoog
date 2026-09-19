@@ -7,7 +7,7 @@
 //! example.
 
 use clack_extensions::note_ports::{NoteDialects, NotePortInfoBuffer, PluginNotePorts};
-use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent};
+use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent};
 use clack_host::events::{EventFlags, Match};
 use clack_host::prelude::*;
 use rtrb::Consumer;
@@ -39,6 +39,14 @@ impl RtMidi {
             bytes: buf,
         })
     }
+}
+
+/// A parameter change headed for the audio thread (plain value, as defined
+/// by the plugin's own min/max range).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParamChange {
+    pub param_id: u32,
+    pub value: f64,
 }
 
 /// Where the plugin wants its note events, discovered via `clap.note-ports`.
@@ -94,15 +102,29 @@ impl EventCollector {
         }
     }
 
-    /// Drains pending MIDI and returns the CLAP input events for one block.
-    /// Event timestamps are interpolated across `0..sample_count` from the
-    /// first drained event, following the clack example.
+    /// Drains pending parameter changes and MIDI, returning the CLAP input
+    /// events for one block. Parameter events go first at time 0, keeping
+    /// the buffer time-ordered; MIDI timestamps are interpolated across
+    /// `0..sample_count` from the first drained event, following the clack
+    /// example.
     pub fn collect(
         &mut self,
         consumer: &mut Consumer<RtMidi>,
+        params: Option<&mut Consumer<ParamChange>>,
         sample_count: u64,
     ) -> InputEvents<'_> {
         self.clap_events.clear();
+
+        if let Some(params) = params {
+            while let Ok(change) = params.pop() {
+                self.clap_events.push(&ParamValueEvent::new(
+                    0,
+                    ClapId::new(change.param_id),
+                    Pckn::match_all(),
+                    change.value,
+                ));
+            }
+        }
 
         let mut first_timestamp = None;
         while let Ok(msg) = consumer.pop() {

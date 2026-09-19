@@ -47,9 +47,13 @@ USAGE:
         List a plugin's parameters (default plugin: \"Surge XT\"), optionally
         filtered by a case-insensitive substring of the name or module.
 
-    labctl play [--plugin MATCH] [--rate HZ] [--frames N]
+    labctl play [--plugin MATCH] [--mapping FILE] [--arturia-mode]
+                [--rate HZ] [--frames N]
         Load a CLAP plugin (default match: \"Surge XT\"), connect the
-        controller's notes to it, and play. Prints callback stats every 5
+        controller to it, and play. Encoders and faders drive the macro
+        mapping (default file: mappings/surge-xt.toml) with soft takeover
+        and display feedback; the control map defaults to DAW mode
+        (--arturia-mode switches it). Prints callback stats every 5
         seconds. Ctrl-C to stop.
 ";
 
@@ -301,12 +305,16 @@ fn run_params(plugin_match: &str, find: Option<&str>) -> Result<(), Box<dyn std:
 struct PlayArgs {
     plugin: String,
     config: lab_engine::audio::EngineConfig,
+    mapping: Option<String>,
+    arturia_mode: bool,
 }
 
 fn parse_play_args(args: &[String]) -> Result<PlayArgs, String> {
     let mut out = PlayArgs {
         plugin: "Surge XT".to_string(),
         config: lab_engine::audio::EngineConfig::default(),
+        mapping: None,
+        arturia_mode: false,
     };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -317,6 +325,8 @@ fn parse_play_args(args: &[String]) -> Result<PlayArgs, String> {
         };
         match arg.as_str() {
             "--plugin" => out.plugin = value("--plugin")?,
+            "--mapping" => out.mapping = Some(value("--mapping")?),
+            "--arturia-mode" => out.arturia_mode = true,
             "--rate" => {
                 out.config.sample_rate = value("--rate")?
                     .parse()
@@ -331,6 +341,53 @@ fn parse_play_args(args: &[String]) -> Result<PlayArgs, String> {
         }
     }
     Ok(out)
+}
+
+/// Loads and binds the macro mapping for `plugin_id`, if one applies.
+/// An explicitly requested mapping that fails is an error; the default
+/// mapping file is optional.
+fn load_macro_controls(
+    requested: Option<&str>,
+    plugin_id: &str,
+    params: &[lab_engine::params::ParamDescription],
+) -> Result<Option<lab_core::mapping::MacroControls>, Box<dyn std::error::Error>> {
+    use lab_core::mapping::{MacroControls, MappingFile};
+
+    const DEFAULT_MAPPING: &str = "mappings/surge-xt.toml";
+    let (path, required) = match requested {
+        Some(path) => (path.to_string(), true),
+        None => (DEFAULT_MAPPING.to_string(), false),
+    };
+    if !std::path::Path::new(&path).exists() {
+        if required {
+            return Err(format!("mapping file {path} does not exist").into());
+        }
+        println!("no mapping file at {path}; encoders and faders are inactive");
+        return Ok(None);
+    }
+    let file = MappingFile::load(std::path::Path::new(&path))?;
+    if file.plugin_id != plugin_id {
+        if required {
+            return Err(format!(
+                "mapping {path} is for {}, but loaded plugin is {plugin_id}",
+                file.plugin_id
+            )
+            .into());
+        }
+        println!(
+            "mapping {path} is for {}; encoders and faders are inactive",
+            file.plugin_id
+        );
+        return Ok(None);
+    }
+    let controls = MacroControls::bind(&file, plugin_id, params)?;
+    println!("mapping loaded from {path}:");
+    let mut bindings: Vec<_> = controls.bindings().collect();
+    bindings.sort_by_key(|b| format!("{:?}", b.control));
+    for b in bindings {
+        println!("  {:?} -> {} (param {})", b.control, b.label, b.param_id);
+    }
+    Ok(Some(controls))
 }
 
 fn cmd_play(args: &[String]) -> ExitCode {
@@ -369,28 +426,98 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
         &host_info(),
     )?;
 
-    // MIDI: device thread -> mpsc -> forwarder thread -> rtrb -> audio.
-    let (mut producer, consumer) = rtrb::RingBuffer::<RtMidi>::new(1024);
+    // Resolve the macro mapping against the plugin's parameters.
+    let params = lab_engine::params::list_params(&mut instance);
+    let macro_controls = load_macro_controls(args.mapping.as_deref(), &plugin.id, &params)?;
+
+    // MIDI: device thread -> mpsc -> control thread, which routes playable
+    // events into the RtMidi ring, mapped control moves into the param
+    // ring, and feedback back out to the device display.
+    let (mut midi_producer, midi_consumer) = rtrb::RingBuffer::<RtMidi>::new(1024);
+    let (mut param_producer, param_consumer) =
+        rtrb::RingBuffer::<lab_engine::events::ParamChange>::new(256);
     let mut device = MidirDevice::open(CLIENT_NAME, DEFAULT_PORT_MATCH)
         .map(Some)
         .unwrap_or_else(|e| {
             println!("no controller ({e}); running audio without MIDI input");
             None
         });
-    let _forwarder = device.take().map(|mut device| {
+    let plugin_title = plugin.name.clone().unwrap_or_else(|| plugin.id.clone());
+    let arturia_mode = args.arturia_mode;
+    let _control_thread = device.take().map(|mut device| {
         println!("controller connected: {:?}", device.input_port_name());
+        let mut controls = macro_controls;
         thread::spawn(move || {
+            use lab_midi::event::{ControlMap, DeviceEvent};
+            use lab_midi::rate::Coalescer;
+
+            let map = if arturia_mode {
+                ControlMap::minilab3_arturia()
+            } else {
+                ControlMap::minilab3_daw()
+            };
+            let mut coalescer: Coalescer<(String, String)> =
+                Coalescer::new(Duration::from_millis(33));
+            let mut revert_at: Option<std::time::Instant> = None;
+
+            let show = |device: &mut MidirDevice, line1: &str, line2: &str| {
+                if device.has_output() {
+                    let _ = device.send(&display_text(line1, line2));
+                }
+            };
+            if device.has_output() {
+                let _ = device.send(&init());
+            }
+            show(&mut device, &plugin_title, "");
+
             loop {
-                if let Some(msg) = device.recv_timeout(Duration::from_millis(50))
-                    && let Some(rt) = RtMidi::from_bytes(msg.timestamp_us, &msg.bytes)
-                {
-                    let _ = producer.push(rt);
+                let now = std::time::Instant::now();
+                if let Some(msg) = device.recv_timeout(Duration::from_millis(50)) {
+                    match map.map(MidiMessage::decode(&msg.bytes)) {
+                        DeviceEvent::NoteOn { .. }
+                        | DeviceEvent::NoteOff { .. }
+                        | DeviceEvent::PitchBend { .. }
+                        | DeviceEvent::ModStrip { .. }
+                        | DeviceEvent::PadDown { .. }
+                        | DeviceEvent::PadUp { .. }
+                        | DeviceEvent::PadPressure { .. } => {
+                            if let Some(rt) = RtMidi::from_bytes(msg.timestamp_us, &msg.bytes) {
+                                let _ = midi_producer.push(rt);
+                            }
+                        }
+                        event @ (DeviceEvent::Encoder { .. } | DeviceEvent::Fader { .. }) => {
+                            if let Some(update) = controls.as_mut().and_then(|c| c.handle(&event)) {
+                                let _ = param_producer.push(update.change);
+                                if let Some((l1, l2)) =
+                                    coalescer.offer((update.label, update.display_value), now)
+                                {
+                                    show(&mut device, &l1, &l2);
+                                }
+                                revert_at = Some(now + Duration::from_millis(1200));
+                            }
+                        }
+                        // Main encoder, Shift, transport: Phase 5 territory.
+                        _ => {}
+                    }
+                }
+                let now = std::time::Instant::now();
+                if let Some((l1, l2)) = coalescer.poll(now) {
+                    show(&mut device, &l1, &l2);
+                }
+                if revert_at.is_some_and(|t| now >= t) {
+                    revert_at = None;
+                    show(&mut device, &plugin_title, "");
                 }
             }
         })
     });
 
-    let (_stream, stats) = activate_to_stream(&mut instance, consumer, args.config)?;
+    let (_stream, stats) = activate_to_stream(
+        &mut instance,
+        midi_consumer,
+        Some(param_consumer),
+        args.config,
+    )?;
     println!(
         "audio running ({} Hz requested, {} frames requested). Play the keys; Ctrl-C to stop.",
         args.config.sample_rate, args.config.buffer_frames
