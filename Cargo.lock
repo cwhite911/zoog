@@ -1746,6 +1746,7 @@ name = "lab-gui"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "lab-core",
 ]
 
 [[package]]

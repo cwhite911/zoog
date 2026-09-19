@@ -13,7 +13,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use lab_engine::audio::{AudioStats, EngineConfig, activate_to_stream};
+pub use lab_engine::audio::EngineConfig;
+use lab_engine::audio::{AudioStats, activate_to_stream};
 use lab_engine::discovery::find_plugin;
 use lab_engine::events::{ParamChange, RtMidi};
 use lab_engine::host::HostThreadMessage;
