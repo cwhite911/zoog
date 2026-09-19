@@ -48,7 +48,7 @@ USAGE:
         filtered by a case-insensitive substring of the name or module.
 
     labctl play [--plugin MATCH] [--rate HZ] [--frames N]
-        Load a CLAP plugin (default match: \"surge\"), connect the
+        Load a CLAP plugin (default match: \"Surge XT\"), connect the
         controller's notes to it, and play. Prints callback stats every 5
         seconds. Ctrl-C to stop.
 ";
