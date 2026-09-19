@@ -401,6 +401,7 @@ fn host_thread(
     let mut stats: Option<std::sync::Arc<AudioStats>> = None;
     let mut audio_info = None;
     let mut _stream = None;
+    let mut audio_retry_at: Option<Instant> = None;
     if let Some(instance) = instance.as_mut() {
         match activate_to_stream(instance, midi_consumer, Some(param_consumer), config.engine) {
             Ok((stream, audio_stats, info)) => {
@@ -410,6 +411,7 @@ fn host_thread(
             }
             Err(e) => {
                 let _ = events.send(CoreEvent::Error(format!("audio failed: {e}")));
+                audio_retry_at = Some(Instant::now() + Duration::from_secs(5));
             }
         }
     }
@@ -449,6 +451,7 @@ fn host_thread(
     let mut last_busy_budget = (0u64, 0u64);
     let mut last_callbacks = 0u64;
     let mut stalled_for = 0u32;
+    let mut rebuild_failures = 0u32;
     loop {
         if let Some(rx) = &host_rx
             && let Ok(HostThreadMessage::RunOnMainThread) =
@@ -557,13 +560,15 @@ fn host_thread(
             } else {
                 0.0
             };
-            // Stall watchdog: a started stream whose callback counter stops
-            // advancing has died underneath us (seen once on PipeWire).
+            // Stall watchdog: a stream whose callback counter stops
+            // advancing (or never starts) has died underneath us (seen
+            // once on PipeWire, e.g. on output-device loss).
             let callbacks_now = stats.callbacks.load(Relaxed);
-            if callbacks_now == last_callbacks && callbacks_now > 0 {
+            if callbacks_now == last_callbacks {
                 stalled_for += 1;
             } else {
                 stalled_for = 0;
+                rebuild_failures = 0;
             }
             last_callbacks = callbacks_now;
             let output_peak = f32::from_bits(
@@ -586,7 +591,9 @@ fn host_thread(
         // Rebuild a stalled stream: drop it (which drops the audio
         // processor), deactivate the plugin, and activate onto fresh ring
         // buffers whose producers are handed to the control thread.
-        if stalled_for >= 3 {
+        let retry_due = stats.is_none() && audio_retry_at.is_some_and(|t| Instant::now() >= t);
+        if (stalled_for >= 3 || retry_due) && rebuild_failures < 5 {
+            audio_retry_at = None;
             stalled_for = 0;
             last_callbacks = 0;
             last_busy_budget = (0, 0);
@@ -596,7 +603,9 @@ fn host_thread(
             _stream = None;
             stats = None;
             if let Some(instance) = instance.as_mut() {
-                if let Err(e) = instance.try_deactivate() {
+                if instance.is_active()
+                    && let Err(e) = instance.try_deactivate()
+                {
                     let _ = events.send(CoreEvent::Error(format!(
                         "plugin deactivation failed: {e}; restart benchlab"
                     )));
@@ -620,8 +629,17 @@ fn host_thread(
                         let _ = events.send(CoreEvent::Error("audio stream rebuilt".to_string()));
                     }
                     Err(e) => {
+                        rebuild_failures += 1;
+                        if rebuild_failures < 5 {
+                            audio_retry_at = Some(Instant::now() + Duration::from_secs(5));
+                        }
                         let _ = events.send(CoreEvent::Error(format!(
-                            "audio stream rebuild failed: {e}"
+                            "audio stream rebuild failed: {e}{}",
+                            if rebuild_failures >= 5 {
+                                "; giving up, restart benchlab"
+                            } else {
+                                "; retrying in 5 s"
+                            }
                         )));
                     }
                 }
