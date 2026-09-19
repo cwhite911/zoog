@@ -100,12 +100,12 @@ enum Page {
 
 #[derive(Debug, Clone, Default)]
 struct Stats {
-    callbacks: u64,
     overruns: u64,
     max_callback_ms: f64,
     min_frames: u64,
     max_frames: u64,
     stream_errors: u64,
+    dsp_load: f64,
 }
 
 struct App {
@@ -121,6 +121,8 @@ struct App {
     favorites_only: bool,
     selected: Option<i64>,
     loaded: Option<i64>,
+    loaded_name: Option<String>,
+    audio: Option<lab_core::app::AudioInfo>,
     control_views: Vec<ControlView>,
     pads: [bool; 8],
     stats: Stats,
@@ -148,6 +150,8 @@ impl App {
                 favorites_only: false,
                 selected: None,
                 loaded: None,
+                loaded_name: None,
+                audio: None,
                 control_views: Vec::new(),
                 pads: [false; 8],
                 stats: Stats::default(),
@@ -266,8 +270,9 @@ impl App {
                 presets,
                 categories,
                 controls,
-                ..
+                audio,
             } => {
+                self.audio = audio;
                 self.plugin_title = plugin_title;
                 self.engine_running = engine_running;
                 self.device_connected = device_connected;
@@ -282,9 +287,10 @@ impl App {
                     })
                     .collect();
             }
-            CoreEvent::PresetLoaded { id, .. } => {
+            CoreEvent::PresetLoaded { id, name } => {
                 self.loaded = Some(id);
                 self.selected = Some(id);
+                self.loaded_name = Some(name);
             }
             CoreEvent::PresetLoadFailed { name } => {
                 self.last_error = Some(format!("load failed: {name}"));
@@ -309,20 +315,21 @@ impl App {
                 self.categories = categories;
             }
             CoreEvent::Stats {
-                callbacks,
+                callbacks: _,
                 overruns,
                 max_callback_ms,
                 min_frames,
                 max_frames,
                 stream_errors,
+                dsp_load,
             } => {
                 self.stats = Stats {
-                    callbacks,
                     overruns,
                     max_callback_ms,
                     min_frames,
                     max_frames,
                     stream_errors,
+                    dsp_load,
                 };
             }
             CoreEvent::Error(e) => self.last_error = Some(e),
@@ -371,7 +378,7 @@ impl App {
             button("Settings").on_press(Message::OpenSettings(true)),
         ]
         .spacing(10)
-        .width(Length::Fixed(230.0));
+        .width(Length::Fixed(190.0));
 
         // Center: preset list.
         let mut list = column![].spacing(2);
@@ -387,7 +394,7 @@ impl App {
             };
             let label = row![
                 text(format!("{marker}{}", preset.name)).width(Fill),
-                text(preset.category.clone().unwrap_or_default())
+                text(preset.author.clone().unwrap_or_default())
                     .size(12)
                     .color(theme::TEXT_DIM),
             ]
@@ -429,38 +436,51 @@ impl App {
             controls: &self.control_views,
             pads: &self.pads,
         })
-        .width(Length::Fixed(420.0))
-        .height(Length::Fixed(340.0));
+        .width(Fill)
+        .height(Fill);
+        let now_playing = self
+            .loaded_name
+            .clone()
+            .unwrap_or_else(|| "no preset loaded".to_string());
         let macro_panel = column![
-            text("Macros").size(14),
+            text(now_playing).size(24),
+            text(self.plugin_title.clone())
+                .size(13)
+                .color(theme::TEXT_DIM),
             macro_view,
             text("drag knobs and faders; hardware moves mirror here")
                 .size(11)
                 .color(theme::TEXT_DIM),
         ]
-        .spacing(6);
+        .spacing(8)
+        .width(Length::FillPortion(3));
 
         let body = row![filters, presets_panel, macro_panel]
             .spacing(16)
             .height(Fill);
 
         // Status bar.
+        let audio = match (&self.audio, self.engine_running) {
+            (Some(a), _) => format!(
+                "{} {} Hz {}",
+                a.device_name.as_deref().unwrap_or("audio"),
+                a.sample_rate,
+                a.sample_format
+            ),
+            (None, true) => "audio".to_string(),
+            (None, false) => "no audio (stub)".to_string(),
+        };
         let status = format!(
-            "MIDI: {}   engine: {}   {} Hz req   frames {}..{}   callbacks {}   overruns {}   max {:.2} ms   stream errors {}{}",
+            "MIDI: {}   {}   dsp {:>4.1}%   frames {}..{}   overruns {}   max {:.2} ms   stream errors {}{}",
             if self.device_connected {
                 "connected"
             } else {
                 "absent"
             },
-            if self.engine_running {
-                "running"
-            } else {
-                "stub"
-            },
-            self.boot.sample_rate,
+            audio,
+            self.stats.dsp_load * 100.0,
             self.stats.min_frames,
             self.stats.max_frames,
-            self.stats.callbacks,
             self.stats.overruns,
             self.stats.max_callback_ms,
             self.stats.stream_errors,

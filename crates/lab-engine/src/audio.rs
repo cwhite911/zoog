@@ -52,6 +52,20 @@ pub struct AudioStats {
     pub min_frames: AtomicU64,
     /// Largest block the backend delivered, in frames.
     pub max_frames: AtomicU64,
+    /// Total wall time spent inside process(), in nanoseconds.
+    pub busy_ns: AtomicU64,
+    /// Total frame-time budget of all processed blocks, in nanoseconds.
+    /// busy/budget is the DSP load.
+    pub budget_ns: AtomicU64,
+}
+
+/// The negotiated audio stream, for display.
+#[derive(Debug, Clone)]
+pub struct AudioInfo {
+    pub device_name: Option<String>,
+    pub sample_rate: u32,
+    pub buffer_frames: u32,
+    pub sample_format: String,
 }
 
 /// Number of channels and per-port channel layout of the plugin's ports.
@@ -302,6 +316,8 @@ impl StreamProcessor {
         if elapsed_ns > budget_ns {
             self.stats.overruns.fetch_add(1, Ordering::Relaxed);
         }
+        self.stats.busy_ns.fetch_add(elapsed_ns, Ordering::Relaxed);
+        self.stats.budget_ns.fetch_add(budget_ns, Ordering::Relaxed);
         self.stats
             .max_frames
             .fetch_max(frames as u64, Ordering::Relaxed);
@@ -349,7 +365,7 @@ pub fn activate_to_stream(
     midi: Consumer<RtMidi>,
     params: Option<Consumer<ParamChange>>,
     config: EngineConfig,
-) -> Result<(cpal::Stream, Arc<AudioStats>), Box<dyn Error>> {
+) -> Result<(cpal::Stream, Arc<AudioStats>, AudioInfo), Box<dyn Error>> {
     let layout_in = query_port_layout(instance, true);
     let layout_out = query_port_layout(instance, false);
     let main_channels = layout_out.main_channel_count();
@@ -372,9 +388,12 @@ pub fn activate_to_stream(
         .ok_or(AudioError::NoOutputDevice)?;
 
     let (sample_format, sample_rate, buffer_frames) = negotiate(&device, config)?;
-    println!(
-        "negotiated audio config: stereo {sample_format} at {sample_rate} Hz, {buffer_frames} frames requested"
-    );
+    let info = AudioInfo {
+        device_name: device.description().ok().map(|d| d.name().to_string()),
+        sample_rate,
+        buffer_frames,
+        sample_format: sample_format.to_string(),
+    };
 
     let stream_config = StreamConfig {
         channels: 2,
@@ -410,7 +429,7 @@ pub fn activate_to_stream(
         .play()
         .map_err(|e| AudioError::Backend(e.to_string()))?;
 
-    Ok((stream, stats))
+    Ok((stream, stats, info))
 }
 
 /// Picks a supported stereo output configuration closest to the request.

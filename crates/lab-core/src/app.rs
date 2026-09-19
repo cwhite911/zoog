@@ -13,6 +13,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub use lab_engine::audio::AudioInfo;
 pub use lab_engine::audio::EngineConfig;
 use lab_engine::audio::{AudioStats, activate_to_stream};
 use lab_engine::discovery::find_plugin;
@@ -82,6 +83,7 @@ pub struct PresetInfo {
     pub id: i64,
     pub name: String,
     pub category: Option<String>,
+    pub author: Option<String>,
     pub favorite: bool,
 }
 
@@ -91,6 +93,7 @@ impl From<&PresetRow> for PresetInfo {
             id: row.id,
             name: row.name.clone(),
             category: row.category.clone(),
+            author: row.creators.first().cloned(),
             favorite: row.favorite,
         }
     }
@@ -115,8 +118,8 @@ pub enum CoreEvent {
         presets: Vec<PresetInfo>,
         categories: Vec<String>,
         controls: Vec<ControlInfo>,
-        sample_rate: u32,
-        buffer_frames: u32,
+        /// Negotiated audio stream, when the engine is running.
+        audio: Option<AudioInfo>,
     },
     PresetLoaded {
         id: i64,
@@ -151,6 +154,9 @@ pub enum CoreEvent {
         min_frames: u64,
         max_frames: u64,
         stream_errors: u64,
+        /// Fraction of the frame-time budget spent in process() since the
+        /// previous stats event (0.0..~1.0).
+        dsp_load: f64,
     },
     Error(String),
 }
@@ -339,12 +345,14 @@ fn host_thread(
 
     // Audio.
     let mut stats: Option<std::sync::Arc<AudioStats>> = None;
+    let mut audio_info = None;
     let mut _stream = None;
     if let Some(instance) = instance.as_mut() {
         match activate_to_stream(instance, midi_consumer, Some(param_consumer), config.engine) {
-            Ok((stream, audio_stats)) => {
+            Ok((stream, audio_stats, info)) => {
                 _stream = Some(stream);
                 stats = Some(audio_stats);
+                audio_info = Some(info);
             }
             Err(e) => {
                 let _ = events.send(CoreEvent::Error(format!("audio failed: {e}")));
@@ -359,8 +367,7 @@ fn host_thread(
         presets,
         categories,
         controls: control_infos,
-        sample_rate: config.engine.sample_rate,
-        buffer_frames: config.engine.buffer_frames,
+        audio: audio_info,
     });
 
     // Main service loop.
@@ -368,6 +375,7 @@ fn host_thread(
         .as_mut()
         .and_then(|i| i.access_handler(|h| h.timer_support().map(|ext| (h.timers.clone(), ext))));
     let mut last_stats = Instant::now();
+    let mut last_busy_budget = (0u64, 0u64);
     loop {
         if let Some(rx) = &host_rx
             && let Ok(HostThreadMessage::RunOnMainThread) =
@@ -466,6 +474,16 @@ fn host_thread(
         {
             use std::sync::atomic::Ordering::Relaxed;
             last_stats = Instant::now();
+            let busy = stats.busy_ns.load(Relaxed);
+            let budget = stats.budget_ns.load(Relaxed);
+            let (last_busy, last_budget) = last_busy_budget;
+            last_busy_budget = (busy, budget);
+            let budget_delta = budget.saturating_sub(last_budget);
+            let dsp_load = if budget_delta > 0 {
+                busy.saturating_sub(last_busy) as f64 / budget_delta as f64
+            } else {
+                0.0
+            };
             let _ = events.send(CoreEvent::Stats {
                 callbacks: stats.callbacks.load(Relaxed),
                 overruns: stats.overruns.load(Relaxed),
@@ -473,6 +491,7 @@ fn host_thread(
                 min_frames: stats.min_frames.load(Relaxed),
                 max_frames: stats.max_frames.load(Relaxed),
                 stream_errors: stats.stream_errors.load(Relaxed),
+                dsp_load,
             });
         }
     }

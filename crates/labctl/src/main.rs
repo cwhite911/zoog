@@ -393,12 +393,23 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
                 device_connected,
                 presets,
                 controls,
-                sample_rate,
-                buffer_frames,
+                audio,
                 ..
             } => {
+                let audio_line = audio
+                    .map(|a| {
+                        format!(
+                            "{} at {} Hz ({}), {} frames requested",
+                            a.device_name
+                                .unwrap_or_else(|| "unknown device".to_string()),
+                            a.sample_rate,
+                            a.sample_format,
+                            a.buffer_frames
+                        )
+                    })
+                    .unwrap_or_else(|| "no audio".to_string());
                 println!(
-                    "ready: {plugin_title} (engine: {}, controller: {}), {} presets browsable, {} controls mapped, {sample_rate} Hz / {buffer_frames} frames requested",
+                    "ready: {plugin_title} (engine: {}, controller: {}), {} presets browsable, {} controls mapped, {audio_line}",
                     if engine_running { "running" } else { "stub" },
                     if device_connected {
                         "connected"
@@ -418,11 +429,13 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
                 min_frames,
                 max_frames,
                 stream_errors,
+                dsp_load,
             } => {
                 if last_stats.elapsed() >= Duration::from_secs(5) {
                     last_stats = std::time::Instant::now();
                     println!(
-                        "callbacks={callbacks} overruns={overruns} max_callback={max_callback_ms:.2}ms frames={min_frames}..{max_frames} stream_errors={stream_errors}"
+                        "callbacks={callbacks} overruns={overruns} max_callback={max_callback_ms:.2}ms dsp={:.1}% frames={min_frames}..{max_frames} stream_errors={stream_errors}",
+                        dsp_load * 100.0
                     );
                 }
             }

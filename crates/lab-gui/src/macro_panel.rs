@@ -38,7 +38,13 @@ struct Drag {
 
 /// Vertical drag distance for a full 0..=1 sweep, in pixels.
 const DRAG_RANGE: f32 = 150.0;
-const KNOB_RADIUS: f32 = 26.0;
+
+/// Knob radius scaled to the knob grid cell, clamped to stay usable.
+fn knob_radius(bounds: Rectangle) -> f32 {
+    let cell_w = bounds.width * 0.66 / 4.0;
+    let cell_h = bounds.height * 0.62 / 2.0;
+    (cell_w.min(cell_h) * 0.32).clamp(18.0, 48.0)
+}
 
 impl<'a> MacroPanel<'a> {
     fn value_of(&self, control: Control) -> f64 {
@@ -50,11 +56,12 @@ impl<'a> MacroPanel<'a> {
     }
 
     fn hit_test(&self, bounds: Rectangle, position: Point) -> Option<Control> {
+        let radius = knob_radius(bounds);
         for i in 0..8u8 {
             let center = knob_center(i, bounds);
             let dx = position.x - center.x;
             let dy = position.y - center.y;
-            if (dx * dx + dy * dy).sqrt() <= KNOB_RADIUS + 6.0 {
+            if (dx * dx + dy * dy).sqrt() <= radius + 6.0 {
                 return Some(Control::Encoder(i));
             }
         }
@@ -183,6 +190,7 @@ impl canvas::Program<Message> for MacroPanel<'_> {
 
 impl MacroPanel<'_> {
     fn draw_knob(&self, frame: &mut Frame, index: u8, bounds: Rectangle) {
+        let radius = knob_radius(bounds);
         let center = knob_center(index, bounds);
         let value = self.value_of(Control::Encoder(index)) as f32;
         let label = self
@@ -199,7 +207,7 @@ impl MacroPanel<'_> {
         let track = Path::new(|b| {
             b.arc(canvas::path::Arc {
                 center,
-                radius: KNOB_RADIUS,
+                radius,
                 start_angle: start,
                 end_angle: Radians(start.0 + sweep),
             })
@@ -212,7 +220,7 @@ impl MacroPanel<'_> {
             let fill = Path::new(|b| {
                 b.arc(canvas::path::Arc {
                     center,
-                    radius: KNOB_RADIUS,
+                    radius,
                     start_angle: start,
                     end_angle: Radians(start.0 + sweep * value),
                 })
@@ -226,12 +234,12 @@ impl MacroPanel<'_> {
         let angle = start.0 + sweep * value;
         let pointer = Path::line(
             Point::new(
-                center.x + angle.cos() * (KNOB_RADIUS - 12.0),
-                center.y + angle.sin() * (KNOB_RADIUS - 12.0),
+                center.x + angle.cos() * (radius - 12.0),
+                center.y + angle.sin() * (radius - 12.0),
             ),
             Point::new(
-                center.x + angle.cos() * (KNOB_RADIUS - 3.0),
-                center.y + angle.sin() * (KNOB_RADIUS - 3.0),
+                center.x + angle.cos() * (radius - 3.0),
+                center.y + angle.sin() * (radius - 3.0),
             ),
         );
         frame.stroke(
@@ -239,9 +247,19 @@ impl MacroPanel<'_> {
             Stroke::default().with_color(theme::TEXT).with_width(3.0),
         );
 
+        // Current value in the middle of the knob.
+        frame.fill_text(Text {
+            content: format!("{:.0}%", value * 100.0),
+            position: center,
+            color: theme::TEXT,
+            size: 12.0.into(),
+            align_x: iced::widget::text::Alignment::Center,
+            align_y: iced::alignment::Vertical::Center,
+            ..Text::default()
+        });
         frame.fill_text(Text {
             content: label,
-            position: Point::new(center.x, center.y + KNOB_RADIUS + 12.0),
+            position: Point::new(center.x, center.y + radius + 12.0),
             color: theme::TEXT_DIM,
             size: 11.0.into(),
             align_x: iced::widget::text::Alignment::Center,
