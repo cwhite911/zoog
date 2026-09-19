@@ -5,3 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+lab-midi = { path = "../lab-midi" }
+clack-extensions = { git = "https://github.com/prokopyl/clack", rev = "27ca28391b57a61bad4bb5099288a7bf9247350d", version = "0.2.0", features = ["clack-host", "audio-ports", "note-ports", "log", "params", "timer"] }
+clack-finder = { git = "https://github.com/prokopyl/clack", rev = "27ca28391b57a61bad4bb5099288a7bf9247350d", version = "0.1.0" }
+clack-host = { git = "https://github.com/prokopyl/clack", rev = "27ca28391b57a61bad4bb5099288a7bf9247350d", version = "0.2.0" }
+cpal = "0.18.2"
+rtrb = "0.4.0"
+
+[dev-dependencies]
+clack-host = { git = "https://github.com/prokopyl/clack", rev = "27ca28391b57a61bad4bb5099288a7bf9247350d" }

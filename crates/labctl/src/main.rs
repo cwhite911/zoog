@@ -39,6 +39,14 @@ USAGE:
     labctl pad <1-8|all> R G B
         Set a pad's temporary color (bank A IDs, DAW-mode message).
         Components are 0-127.
+
+    labctl plugins
+        Scan the CLAP search paths and list every plugin found.
+
+    labctl play [--plugin MATCH] [--rate HZ] [--frames N]
+        Load a CLAP plugin (default match: \"surge\"), connect the
+        controller's notes to it, and play. Prints callback stats every 5
+        seconds. Ctrl-C to stop.
 ";
 
 fn main() -> ExitCode {
@@ -48,6 +56,8 @@ fn main() -> ExitCode {
         Some("monitor") => cmd_monitor(&args[1..]),
         Some("display") => cmd_display(&args[1..]),
         Some("pad") => cmd_pad(&args[1..]),
+        Some("plugins") => cmd_plugins(),
+        Some("play") => cmd_play(&args[1..]),
         Some("--help" | "-h" | "help") | None => {
             print!("{USAGE}");
             ExitCode::from(if args.is_empty() { 2 } else { 0 })
@@ -189,6 +199,139 @@ fn cmd_monitor(args: &[String]) -> ExitCode {
                     break;
                 }
             }
+        }
+    }
+}
+
+fn cmd_plugins() -> ExitCode {
+    let plugins = lab_engine::discovery::scan_all();
+    if plugins.is_empty() {
+        println!("no CLAP plugins found in the search paths");
+    }
+    for plugin in &plugins {
+        println!("{plugin}\n    {}", plugin.path.display());
+    }
+    ExitCode::SUCCESS
+}
+
+struct PlayArgs {
+    plugin: String,
+    config: lab_engine::audio::EngineConfig,
+}
+
+fn parse_play_args(args: &[String]) -> Result<PlayArgs, String> {
+    let mut out = PlayArgs {
+        plugin: "surge".to_string(),
+        config: lab_engine::audio::EngineConfig::default(),
+    };
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let mut value = |name: &str| {
+            it.next()
+                .cloned()
+                .ok_or_else(|| format!("{name} needs a value"))
+        };
+        match arg.as_str() {
+            "--plugin" => out.plugin = value("--plugin")?,
+            "--rate" => {
+                out.config.sample_rate = value("--rate")?
+                    .parse()
+                    .map_err(|_| "--rate must be a number".to_string())?;
+            }
+            "--frames" => {
+                out.config.buffer_frames = value("--frames")?
+                    .parse()
+                    .map_err(|_| "--frames must be a number".to_string())?;
+            }
+            other => return Err(format!("unknown argument {other:?}")),
+        }
+    }
+    Ok(out)
+}
+
+fn cmd_play(args: &[String]) -> ExitCode {
+    let args = match parse_play_args(args) {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("labctl play: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    match run_play(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("labctl play: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use lab_engine::audio::activate_to_stream;
+    use lab_engine::discovery::find_plugin;
+    use lab_engine::events::RtMidi;
+    use lab_engine::host::{BenchHost, BenchHostShared, HostThreadMessage, host_info};
+
+    let plugin = find_plugin(&args.plugin)?;
+    println!("loading {plugin}");
+
+    let (host_tx, host_rx) = channel();
+    let plugin_id = std::ffi::CString::new(plugin.id.as_str())?;
+    let mut instance = lab_engine::clack_host::prelude::PluginInstance::<BenchHost>::new(
+        |_| BenchHostShared::new(host_tx),
+        |_| lab_engine::host::BenchHostMainThread::new(),
+        &plugin.entry,
+        &plugin_id,
+        &host_info(),
+    )?;
+
+    // MIDI: device thread -> mpsc -> forwarder thread -> rtrb -> audio.
+    let (mut producer, consumer) = rtrb::RingBuffer::<RtMidi>::new(1024);
+    let mut device = MidirDevice::open(CLIENT_NAME, DEFAULT_PORT_MATCH)
+        .map(Some)
+        .unwrap_or_else(|e| {
+            println!("no controller ({e}); running audio without MIDI input");
+            None
+        });
+    let _forwarder = device.take().map(|mut device| {
+        println!("controller connected: {:?}", device.input_port_name());
+        thread::spawn(move || {
+            loop {
+                if let Some(msg) = device.recv_timeout(Duration::from_millis(50))
+                    && let Some(rt) = RtMidi::from_bytes(msg.timestamp_us, &msg.bytes)
+                {
+                    let _ = producer.push(rt);
+                }
+            }
+        })
+    });
+
+    let (_stream, stats) = activate_to_stream(&mut instance, consumer, args.config)?;
+    println!(
+        "audio running ({} Hz requested, {} frames requested). Play the keys; Ctrl-C to stop.",
+        args.config.sample_rate, args.config.buffer_frames
+    );
+
+    let timers = instance.access_handler(|h| h.timer_support().map(|ext| (h.timers.clone(), ext)));
+    let mut last_stats = std::time::Instant::now();
+    loop {
+        if let Ok(HostThreadMessage::RunOnMainThread) =
+            host_rx.recv_timeout(Duration::from_millis(30))
+        {
+            instance.call_on_main_thread_callback();
+        }
+        if let Some((timers, timer_ext)) = &timers {
+            timers.tick(timer_ext, &instance.plugin_handle());
+        }
+        if last_stats.elapsed() >= Duration::from_secs(5) {
+            last_stats = std::time::Instant::now();
+            let callbacks = stats.callbacks.load(std::sync::atomic::Ordering::Relaxed);
+            let overruns = stats.overruns.load(std::sync::atomic::Ordering::Relaxed);
+            let max_ms = stats
+                .max_callback_ns
+                .load(std::sync::atomic::Ordering::Relaxed) as f64
+                / 1e6;
+            println!("callbacks={callbacks} overruns={overruns} max_callback={max_ms:.2}ms");
         }
     }
 }
