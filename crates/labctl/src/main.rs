@@ -221,7 +221,7 @@ struct PlayArgs {
 
 fn parse_play_args(args: &[String]) -> Result<PlayArgs, String> {
     let mut out = PlayArgs {
-        plugin: "surge".to_string(),
+        plugin: "Surge XT".to_string(),
         config: lab_engine::audio::EngineConfig::default(),
     };
     let mut it = args.iter();

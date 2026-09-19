@@ -66,27 +66,63 @@ pub fn list_plugins_in_file(path: &Path) -> Vec<FoundPlugin> {
         .collect()
 }
 
-/// Finds a single plugin by case-insensitive substring match on its id or
-/// name. Exactly one match is required.
+/// Finds a single plugin by case-insensitive match on its id or name.
+/// Substring matches are accepted when unambiguous; with several substring
+/// matches, an exact id or name match wins (so "Surge XT" selects Surge XT
+/// even though "Surge XT Effects" also contains it).
 pub fn find_plugin(matcher: &str) -> Result<FoundPlugin, DiscoveryError> {
+    let mut plugins = scan_all();
+    let index = select_match(
+        matcher,
+        &plugins
+            .iter()
+            .map(|p| (p.id.clone(), p.name.clone()))
+            .collect::<Vec<_>>(),
+    )?;
+    Ok(plugins.swap_remove(index))
+}
+
+/// Pure matching logic behind [`find_plugin`], on (id, name) pairs.
+fn select_match(
+    matcher: &str,
+    candidates: &[(String, Option<String>)],
+) -> Result<usize, DiscoveryError> {
     let matcher_lower = matcher.to_lowercase();
-    let mut matches: Vec<FoundPlugin> = scan_all()
-        .into_iter()
-        .filter(|p| {
-            p.id.to_lowercase().contains(&matcher_lower)
-                || p.name
+    let matches: Vec<usize> = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, (id, name))| {
+            id.to_lowercase().contains(&matcher_lower)
+                || name
                     .as_deref()
                     .is_some_and(|n| n.to_lowercase().contains(&matcher_lower))
         })
+        .map(|(i, _)| i)
         .collect();
 
-    match matches.len() {
-        0 => Err(DiscoveryError::NoMatch(matcher.to_string())),
-        1 => Ok(matches.pop().unwrap()),
-        _ => Err(DiscoveryError::Ambiguous(
-            matcher.to_string(),
-            matches.iter().map(|p| p.id.clone()).collect(),
-        )),
+    match matches.as_slice() {
+        [] => Err(DiscoveryError::NoMatch(matcher.to_string())),
+        [single] => Ok(*single),
+        several => {
+            let exact: Vec<usize> = several
+                .iter()
+                .copied()
+                .filter(|&i| {
+                    let (id, name) = &candidates[i];
+                    id.to_lowercase() == matcher_lower
+                        || name
+                            .as_deref()
+                            .is_some_and(|n| n.to_lowercase() == matcher_lower)
+                })
+                .collect();
+            if let [single] = exact.as_slice() {
+                return Ok(*single);
+            }
+            Err(DiscoveryError::Ambiguous(
+                matcher.to_string(),
+                several.iter().map(|&i| candidates[i].0.clone()).collect(),
+            ))
+        }
     }
 }
 
@@ -110,3 +146,52 @@ impl fmt::Display for DiscoveryError {
 }
 
 impl Error for DiscoveryError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidates() -> Vec<(String, Option<String>)> {
+        vec![
+            (
+                "org.surge-synth-team.surge-xt".to_string(),
+                Some("Surge XT".to_string()),
+            ),
+            (
+                "org.surge-synth-team.surge-xt-fx".to_string(),
+                Some("Surge XT Effects".to_string()),
+            ),
+        ]
+    }
+
+    #[test]
+    fn exact_name_wins_over_ambiguous_substring() {
+        assert_eq!(select_match("Surge XT", &candidates()).unwrap(), 0);
+        assert_eq!(select_match("surge xt effects", &candidates()).unwrap(), 1);
+        assert_eq!(
+            select_match("org.surge-synth-team.surge-xt", &candidates()).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn ambiguous_substring_errors_with_ids() {
+        match select_match("surge", &candidates()) {
+            Err(DiscoveryError::Ambiguous(_, ids)) => assert_eq!(ids.len(), 2),
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_match_errors() {
+        assert!(matches!(
+            select_match("vital", &candidates()),
+            Err(DiscoveryError::NoMatch(_))
+        ));
+    }
+
+    #[test]
+    fn single_substring_match_is_accepted() {
+        assert_eq!(select_match("effects", &candidates()).unwrap(), 1);
+    }
+}
