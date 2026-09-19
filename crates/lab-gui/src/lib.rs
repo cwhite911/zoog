@@ -60,7 +60,14 @@ impl Boot {
     }
 }
 
-pub fn run(boot: Boot) -> iced::Result {
+pub fn run(mut boot: Boot) -> iced::Result {
+    // A previously chosen engine sticks across launches unless the CLI
+    // explicitly asked for one.
+    if boot.plugin_match == Boot::default().plugin_match
+        && let Some(saved) = load_engine_choice()
+    {
+        boot.plugin_match = saved;
+    }
     let (width, height) = load_window_size().unwrap_or((1100.0, 720.0));
     let icon =
         iced::window::icon::from_file_data(include_bytes!("../assets/benchlab-256.png"), None).ok();
@@ -89,6 +96,25 @@ fn load_window_size() -> Option<(f32, f32)> {
     match (parts.next(), parts.next()) {
         (Some(Ok(w)), Some(Ok(h))) if w >= 400.0 && h >= 300.0 => Some((w, h)),
         _ => None,
+    }
+}
+
+fn engine_choice_path() -> Option<std::path::PathBuf> {
+    window_state_path().map(|p| p.with_file_name("engine"))
+}
+
+fn load_engine_choice() -> Option<String> {
+    let text = std::fs::read_to_string(engine_choice_path()?).ok()?;
+    let text = text.trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+fn save_engine_choice(engine: &str) {
+    if let Some(path) = engine_choice_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, engine);
     }
 }
 
@@ -134,6 +160,7 @@ pub enum Message {
     ControlDragged(Control, f64),
     Key(keyboard::Event),
     WindowResized(iced::Size),
+    EngineSelected(String),
     OpenSettings(bool),
     Rescan,
 }
@@ -163,6 +190,7 @@ struct App {
     device_connected: bool,
     presets: Vec<PresetInfo>,
     categories: Vec<String>,
+    engines: Vec<lab_core::app::EngineInfo>,
     search: String,
     category: String,
     favorites_only: bool,
@@ -196,6 +224,7 @@ impl App {
                 device_connected: false,
                 presets: Vec::new(),
                 categories: Vec::new(),
+                engines: Vec::new(),
                 search: String::new(),
                 category: ALL_CATEGORIES.to_string(),
                 favorites_only: false,
@@ -305,6 +334,27 @@ impl App {
                 }
             }
             Message::WindowResized(size) => save_window_size(size),
+            Message::EngineSelected(name) => {
+                if let Some(engine) = self.engines.iter().find(|e| e.name == name)
+                    && engine.id != self.boot.plugin_match
+                {
+                    // Changing the boot identity restarts the core
+                    // subscription with the new engine; the old core shuts
+                    // down when its channels disconnect.
+                    self.boot.plugin_match = engine.id.clone();
+                    save_engine_choice(&self.boot.plugin_match);
+                    self.handle = None;
+                    self.plugin_title = "switching engine...".to_string();
+                    self.engine_running = false;
+                    self.presets.clear();
+                    self.categories.clear();
+                    self.control_views.clear();
+                    self.selected = None;
+                    self.loaded = None;
+                    self.loaded_name = None;
+                    self.page = Page::Main;
+                }
+            }
             Message::OpenSettings(open) => {
                 self.page = if open { Page::Settings } else { Page::Main };
             }
@@ -339,8 +389,10 @@ impl App {
                 categories,
                 controls,
                 audio,
+                engines,
             } => {
                 self.audio = audio;
+                self.engines = engines;
                 self.plugin_title = plugin_title;
                 self.engine_running = engine_running;
                 self.device_connected = device_connected;
@@ -594,9 +646,20 @@ impl App {
             ]
             .spacing(10)
         };
+        let engine_names: Vec<String> = self.engines.iter().map(|e| e.name.clone()).collect();
+        let current_engine = self
+            .engines
+            .iter()
+            .find(|e| e.id == boot.plugin_match)
+            .map(|e| e.name.clone());
         container(
             column![
                 text("Settings").size(22),
+                row![
+                    text("Engine").width(Length::Fixed(220.0)),
+                    pick_list(engine_names, current_engine, Message::EngineSelected),
+                ]
+                .spacing(10),
                 entry("Plugin", boot.plugin_match.clone()),
                 entry(
                     "Mapping file",

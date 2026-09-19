@@ -136,6 +136,13 @@ impl From<&PresetRow> for PresetInfo {
     }
 }
 
+/// A discoverable engine (CLAP instrument) for the engine selector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineInfo {
+    pub id: String,
+    pub name: String,
+}
+
 /// A bound control as exposed to the frontend (for the macro view).
 #[derive(Debug, Clone)]
 pub struct ControlInfo {
@@ -160,6 +167,8 @@ pub enum CoreEvent {
         controls: Vec<ControlInfo>,
         /// Negotiated audio stream, when the engine is running.
         audio: Option<AudioInfo>,
+        /// All CLAP plugins found in the search paths.
+        engines: Vec<EngineInfo>,
     },
     PresetLoaded {
         id: i64,
@@ -416,6 +425,13 @@ fn host_thread(
         }
     }
 
+    let engines = lab_engine::discovery::scan_all()
+        .into_iter()
+        .map(|found| EngineInfo {
+            name: found.name.clone().unwrap_or_else(|| found.id.clone()),
+            id: found.id,
+        })
+        .collect();
     let _ = events.send(CoreEvent::Ready {
         plugin_title: plugin_title.clone(),
         engine_running: stats.is_some(),
@@ -424,6 +440,7 @@ fn host_thread(
         categories,
         controls: control_infos,
         audio: audio_info,
+        engines,
     });
 
     // Session restore: reload the last-used preset.
@@ -1046,7 +1063,13 @@ impl ControlThread {
             }
 
             let now = Instant::now();
-            while let Ok(msg) = self.from_host.try_recv() {
+            loop {
+                let msg = match self.from_host.try_recv() {
+                    Ok(msg) => msg,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    // Host thread is gone: shut down and release the port.
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
+                };
                 match msg {
                     ToControl::PresetLoaded { name, params } => {
                         if let Some(c) = self.controls.as_mut() {
