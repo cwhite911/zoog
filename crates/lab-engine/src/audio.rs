@@ -45,6 +45,13 @@ pub struct AudioStats {
     pub overruns: AtomicU64,
     /// Worst callback duration seen, in nanoseconds.
     pub max_callback_ns: AtomicU64,
+    /// Backend stream errors (reported on cpal's error callback, e.g. the
+    /// ALSA EIO burst PipeWire produces while the stream settles).
+    pub stream_errors: AtomicU64,
+    /// Smallest block the backend delivered, in frames (0 = none yet).
+    pub min_frames: AtomicU64,
+    /// Largest block the backend delivered, in frames.
+    pub max_frames: AtomicU64,
 }
 
 /// Number of channels and per-port channel layout of the plugin's ports.
@@ -292,6 +299,15 @@ impl StreamProcessor {
         if elapsed_ns > budget_ns {
             self.stats.overruns.fetch_add(1, Ordering::Relaxed);
         }
+        self.stats
+            .max_frames
+            .fetch_max(frames as u64, Ordering::Relaxed);
+        let prev_min = self.stats.min_frames.load(Ordering::Relaxed);
+        if prev_min == 0 || (frames as u64) < prev_min {
+            self.stats
+                .min_frames
+                .store(frames as u64, Ordering::Relaxed);
+        }
     }
 }
 
@@ -352,6 +368,9 @@ pub fn activate_to_stream(
         .ok_or(AudioError::NoOutputDevice)?;
 
     let (sample_format, sample_rate, buffer_frames) = negotiate(&device, config)?;
+    println!(
+        "negotiated audio config: stereo {sample_format} at {sample_rate} Hz, {buffer_frames} frames requested"
+    );
 
     let stream_config = StreamConfig {
         channels: 2,
@@ -450,11 +469,16 @@ fn build_typed<S: SizedSample + FromSample<f32>>(
     config: StreamConfig,
     mut processor: StreamProcessor,
 ) -> Result<cpal::Stream, AudioError> {
+    let error_stats = processor.stats.clone();
     device
         .build_output_stream(
             config,
             move |data: &mut [S], _| processor.process(data),
-            |e| eprintln!("audio stream error: {e}"),
+            move |_| {
+                // Counted, not printed: PipeWire produces a burst of ALSA
+                // EIO errors while the stream settles at startup.
+                error_stats.stream_errors.fetch_add(1, Ordering::Relaxed);
+            },
             None,
         )
         .map_err(|e| AudioError::Backend(e.to_string()))

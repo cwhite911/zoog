@@ -324,14 +324,17 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
             timers.tick(timer_ext, &instance.plugin_handle());
         }
         if last_stats.elapsed() >= Duration::from_secs(5) {
+            use std::sync::atomic::Ordering::Relaxed;
             last_stats = std::time::Instant::now();
-            let callbacks = stats.callbacks.load(std::sync::atomic::Ordering::Relaxed);
-            let overruns = stats.overruns.load(std::sync::atomic::Ordering::Relaxed);
-            let max_ms = stats
-                .max_callback_ns
-                .load(std::sync::atomic::Ordering::Relaxed) as f64
-                / 1e6;
-            println!("callbacks={callbacks} overruns={overruns} max_callback={max_ms:.2}ms");
+            let max_ms = stats.max_callback_ns.load(Relaxed) as f64 / 1e6;
+            println!(
+                "callbacks={} overruns={} max_callback={max_ms:.2}ms frames={}..{} stream_errors={}",
+                stats.callbacks.load(Relaxed),
+                stats.overruns.load(Relaxed),
+                stats.min_frames.load(Relaxed),
+                stats.max_frames.load(Relaxed),
+                stats.stream_errors.load(Relaxed),
+            );
         }
     }
 }
