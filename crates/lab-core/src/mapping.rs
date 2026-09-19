@@ -185,11 +185,10 @@ impl MacroControls {
                 Control::Fader(entry.index - 1)
             };
 
-            let param = resolve_param(entry, params).ok_or_else(|| {
-                MappingError::UnresolvedParam {
+            let param =
+                resolve_param(entry, params).ok_or_else(|| MappingError::UnresolvedParam {
                     label: entry.label.clone(),
-                }
-            })?;
+                })?;
 
             values.insert(param.id, param.value.unwrap_or(param.default_value));
             bindings.insert(
@@ -205,10 +204,7 @@ impl MacroControls {
         }
 
         Ok(MacroControls {
-            takeover: bindings
-                .keys()
-                .map(|&c| (c, SoftTakeover::new()))
-                .collect(),
+            takeover: bindings.keys().map(|&c| (c, SoftTakeover::new())).collect(),
             bindings,
             values,
         })
@@ -346,10 +342,7 @@ param-id = 200
     fn parses_and_binds() {
         let controls = bound();
         assert_eq!(controls.bindings().count(), 3);
-        let cutoff = controls
-            .bindings()
-            .find(|b| b.label == "Cutoff")
-            .unwrap();
+        let cutoff = controls.bindings().find(|b| b.label == "Cutoff").unwrap();
         // Resolved by name, with the range override applied.
         assert_eq!(cutoff.param_id, 101);
         assert_eq!((cutoff.lo, cutoff.hi), (0.2, 0.8));
@@ -402,12 +395,18 @@ param-id = 200
         // encoder up from below to pick it up, then to the top.
         assert!(
             controls
-                .handle(&DeviceEvent::Encoder { index: 1, value: 20 })
+                .handle(&DeviceEvent::Encoder {
+                    index: 1,
+                    value: 20
+                })
                 .is_none()
         );
         assert!(
             controls
-                .handle(&DeviceEvent::Encoder { index: 1, value: 80 })
+                .handle(&DeviceEvent::Encoder {
+                    index: 1,
+                    value: 80
+                })
                 .is_some()
         );
         let update = controls
@@ -440,7 +439,10 @@ param-id = 200
         // Fader still sits near 100; small move must NOT jump the param.
         assert!(
             controls
-                .handle(&DeviceEvent::Fader { index: 0, value: 99 })
+                .handle(&DeviceEvent::Fader {
+                    index: 0,
+                    value: 99
+                })
                 .is_none()
         );
         // Sweeping down through 0.1 picks it up again.
@@ -456,7 +458,10 @@ param-id = 200
         let mut controls = bound();
         assert!(
             controls
-                .handle(&DeviceEvent::Encoder { index: 7, value: 64 })
+                .handle(&DeviceEvent::Encoder {
+                    index: 7,
+                    value: 64
+                })
                 .is_none()
         );
         assert!(

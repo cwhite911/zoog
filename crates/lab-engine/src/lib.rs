@@ -9,6 +9,7 @@ pub mod discovery;
 pub mod events;
 pub mod host;
 pub mod params;
+pub mod presets;
 
 // Re-exported so binaries drive the host without adding their own
 // (version-pinned, git) clack dependency.

@@ -2,6 +2,9 @@
 //! `ports`/`monitor` (Phase 1), `display`/`pad` (Phase 2), `play` (Phase 3),
 //! `presets` (Phase 5).
 
+mod hostutil;
+mod presets;
+
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::process::ExitCode;
@@ -47,14 +50,18 @@ USAGE:
         List a plugin's parameters (default plugin: \"Surge XT\"), optionally
         filtered by a case-insensitive substring of the name or module.
 
+    labctl presets <scan|list|search|categories|load|favorite> ...
+        Preset library commands; run `labctl presets` for details.
+
     labctl play [--plugin MATCH] [--mapping FILE] [--arturia-mode]
                 [--rate HZ] [--frames N]
         Load a CLAP plugin (default match: \"Surge XT\"), connect the
         controller to it, and play. Encoders and faders drive the macro
         mapping (default file: mappings/surge-xt.toml) with soft takeover
         and display feedback; the control map defaults to DAW mode
-        (--arturia-mode switches it). Prints callback stats every 5
-        seconds. Ctrl-C to stop.
+        (--arturia-mode switches it). The main encoder browses the preset
+        library (turn scrolls, Shift+turn changes category, click loads).
+        Prints callback stats every 5 seconds. Ctrl-C to stop.
 ";
 
 fn main() -> ExitCode {
@@ -66,6 +73,7 @@ fn main() -> ExitCode {
         Some("pad") => cmd_pad(&args[1..]),
         Some("plugins") => cmd_plugins(),
         Some("params") => cmd_params(&args[1..]),
+        Some("presets") => presets::cmd_presets(&args[1..]),
         Some("play") => cmd_play(&args[1..]),
         Some("--help" | "-h" | "help") | None => {
             print!("{USAGE}");
@@ -407,28 +415,61 @@ fn cmd_play(args: &[String]) -> ExitCode {
     }
 }
 
+/// Control-thread request executed on the host thread.
+enum HostCmd {
+    LoadPreset {
+        id: i64,
+        name: String,
+        path: Option<std::path::PathBuf>,
+        load_key: Option<String>,
+    },
+}
+
+/// Host-thread notification consumed by the control thread.
+enum CtrlMsg {
+    PresetLoaded {
+        name: String,
+        params: Vec<lab_engine::params::ParamDescription>,
+    },
+    PresetLoadFailed {
+        name: String,
+    },
+}
+
 fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use lab_core::browser::{BrowseItem, Browser};
     use lab_engine::audio::activate_to_stream;
     use lab_engine::discovery::find_plugin;
     use lab_engine::events::RtMidi;
-    use lab_engine::host::{BenchHost, BenchHostShared, HostThreadMessage, host_info};
+    use lab_engine::host::HostThreadMessage;
 
     let plugin = find_plugin(&args.plugin)?;
     println!("loading {plugin}");
 
-    let (host_tx, host_rx) = channel();
-    let plugin_id = std::ffi::CString::new(plugin.id.as_str())?;
-    let mut instance = lab_engine::clack_host::prelude::PluginInstance::<BenchHost>::new(
-        |_| BenchHostShared::new(host_tx),
-        |_| lab_engine::host::BenchHostMainThread::new(),
-        &plugin.entry,
-        &plugin_id,
-        &host_info(),
-    )?;
+    let (mut instance, host_rx) = hostutil::make_instance(&plugin)?;
 
     // Resolve the macro mapping against the plugin's parameters.
     let params = lab_engine::params::list_params(&mut instance);
     let macro_controls = load_macro_controls(args.mapping.as_deref(), &plugin.id, &params)?;
+
+    // Preset library for hardware browsing (indexed on first use).
+    let mut library = presets::open_library()?;
+    presets::ensure_indexed(&mut library, &plugin)?;
+    let browse_items: Vec<BrowseItem> = library
+        .search(&lab_library::Filter {
+            engine: Some(plugin.id.clone()),
+            ..Default::default()
+        })?
+        .into_iter()
+        .map(|row| BrowseItem {
+            id: row.id,
+            name: row.name,
+            category: row.category,
+            path: row.path,
+            load_key: row.load_key,
+        })
+        .collect();
+    println!("{} presets browsable", browse_items.len());
 
     // MIDI: device thread -> mpsc -> control thread, which routes playable
     // events into the RtMidi ring, mapped control moves into the param
@@ -444,9 +485,12 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
         });
     let plugin_title = plugin.name.clone().unwrap_or_else(|| plugin.id.clone());
     let arturia_mode = args.arturia_mode;
+    let (cmd_tx, cmd_rx) = channel::<HostCmd>();
+    let (ctrl_tx, ctrl_rx) = channel::<CtrlMsg>();
     let _control_thread = device.take().map(|mut device| {
         println!("controller connected: {:?}", device.input_port_name());
         let mut controls = macro_controls;
+        let mut browser = Browser::new(browse_items);
         thread::spawn(move || {
             use lab_midi::event::{ControlMap, DeviceEvent};
             use lab_midi::rate::Coalescer;
@@ -459,6 +503,7 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
             let mut coalescer: Coalescer<(String, String)> =
                 Coalescer::new(Duration::from_millis(33));
             let mut revert_at: Option<std::time::Instant> = None;
+            let mut title = plugin_title;
 
             let show = |device: &mut MidirDevice, line1: &str, line2: &str| {
                 if device.has_output() {
@@ -468,7 +513,7 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
             if device.has_output() {
                 let _ = device.send(&init());
             }
-            show(&mut device, &plugin_title, "");
+            show(&mut device, &title, "");
 
             loop {
                 let now = std::time::Instant::now();
@@ -496,17 +541,72 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
                                 revert_at = Some(now + Duration::from_millis(1200));
                             }
                         }
-                        // Main encoder, Shift, transport: Phase 5 territory.
+                        DeviceEvent::MainEncoderTurn { delta } => {
+                            if let Some(item) = browser.scroll(delta) {
+                                let name = item.name.clone();
+                                let (pos, len) = browser.position();
+                                let line2 = format!("{} {pos}/{len}", browser.category_name());
+                                if let Some((l1, l2)) = coalescer.offer((name, line2), now) {
+                                    show(&mut device, &l1, &l2);
+                                }
+                                revert_at = Some(now + Duration::from_secs(3));
+                            }
+                        }
+                        DeviceEvent::MainEncoderShiftTurn { delta } => {
+                            if delta != 0 {
+                                let category = browser.cycle_category(delta).to_string();
+                                let name = browser
+                                    .current()
+                                    .map(|i| i.name.clone())
+                                    .unwrap_or_default();
+                                if let Some((l1, l2)) =
+                                    coalescer.offer((format!("[{category}]"), name), now)
+                                {
+                                    show(&mut device, &l1, &l2);
+                                }
+                                revert_at = Some(now + Duration::from_secs(3));
+                            }
+                        }
+                        DeviceEvent::MainEncoderClick { pressed: true } => {
+                            if let Some(item) = browser.current() {
+                                let name = item.name.clone();
+                                let _ = cmd_tx.send(HostCmd::LoadPreset {
+                                    id: item.id,
+                                    name: name.clone(),
+                                    path: item.path.clone(),
+                                    load_key: item.load_key.clone(),
+                                });
+                                show(&mut device, "Loading...", &name);
+                                revert_at = None;
+                            }
+                        }
+                        // Shift, transport, click release: nothing yet.
                         _ => {}
                     }
                 }
                 let now = std::time::Instant::now();
+                while let Ok(msg) = ctrl_rx.try_recv() {
+                    match msg {
+                        CtrlMsg::PresetLoaded { name, params } => {
+                            if let Some(c) = controls.as_mut() {
+                                c.reset_values(&params);
+                            }
+                            title = name;
+                            show(&mut device, &title, "");
+                            revert_at = None;
+                        }
+                        CtrlMsg::PresetLoadFailed { name } => {
+                            show(&mut device, "Load failed", &name);
+                            revert_at = Some(now + Duration::from_secs(2));
+                        }
+                    }
+                }
                 if let Some((l1, l2)) = coalescer.poll(now) {
                     show(&mut device, &l1, &l2);
                 }
                 if revert_at.is_some_and(|t| now >= t) {
                     revert_at = None;
-                    show(&mut device, &plugin_title, "");
+                    show(&mut device, &title, "");
                 }
             }
         })
@@ -533,6 +633,37 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some((timers, timer_ext)) = &timers {
             timers.tick(timer_ext, &instance.plugin_handle());
+        }
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                HostCmd::LoadPreset {
+                    id,
+                    name,
+                    path,
+                    load_key,
+                } => {
+                    match lab_engine::presets::load_preset(
+                        &mut instance,
+                        path.as_deref(),
+                        load_key.as_deref(),
+                    ) {
+                        Ok(()) => {
+                            println!("loaded preset {name:?}");
+                            let params = lab_engine::params::list_params(&mut instance);
+                            let now_s = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs() as i64)
+                                .unwrap_or(0);
+                            let _ = library.touch_last_used(id, now_s);
+                            let _ = ctrl_tx.send(CtrlMsg::PresetLoaded { name, params });
+                        }
+                        Err(e) => {
+                            eprintln!("preset load failed for {name:?}: {e}");
+                            let _ = ctrl_tx.send(CtrlMsg::PresetLoadFailed { name });
+                        }
+                    }
+                }
+            }
         }
         if last_stats.elapsed() >= Duration::from_secs(5) {
             use std::sync::atomic::Ordering::Relaxed;
