@@ -12,7 +12,7 @@ use iced::{Element, Fill, Length, Subscription, Task, keyboard};
 use lab_core::app::{
     CoreCommand, CoreConfig, CoreEvent, CoreHandle, EngineConfig, PresetInfo, start,
 };
-use lab_core::looper::LooperButton;
+use lab_core::looper::{LooperButton, LooperUiState};
 use lab_core::mapping::Control;
 
 use macro_panel::{ControlView, MacroPanel};
@@ -140,6 +140,38 @@ fn project_controls(controls: &[lab_core::app::ControlInfo]) -> Vec<ControlView>
         .collect()
 }
 
+/// A rounded looper transport button: filled with `accent` while its state
+/// is active, a quiet outline otherwise, brightening on hover.
+fn looper_button_style(
+    accent: iced::Color,
+    active: bool,
+) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |_theme, status| {
+        let hovered = status == button::Status::Hovered;
+        let background = if active {
+            accent
+        } else if hovered {
+            iced::Color { a: 0.25, ..accent }
+        } else {
+            iced::Color { a: 0.10, ..accent }
+        };
+        button::Style {
+            background: Some(iced::Background::Color(background)),
+            text_color: if active {
+                iced::Color::BLACK
+            } else {
+                theme::TEXT
+            },
+            border: iced::Border {
+                color: iced::Color { a: 0.6, ..accent },
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..button::Style::default()
+        }
+    }
+}
+
 fn app_title(_app: &App) -> String {
     "benchlab".to_string()
 }
@@ -203,6 +235,7 @@ struct App {
     control_views: Vec<ControlView>,
     pads: [bool; 8],
     stats: Stats,
+    looper_state: LooperUiState,
     looper_status: String,
     last_error: Option<String>,
     page: Page,
@@ -238,6 +271,7 @@ impl App {
                 control_views: Vec::new(),
                 pads: [false; 8],
                 stats: Stats::default(),
+                looper_state: LooperUiState::Empty,
                 looper_status: "loop: empty".to_string(),
                 last_error: None,
                 page: Page::Main,
@@ -429,7 +463,10 @@ impl App {
                 return self.scroll_to_selected();
             }
             CoreEvent::DeviceConnected(connected) => self.device_connected = connected,
-            CoreEvent::Looper(status) => self.looper_status = status,
+            CoreEvent::Looper { state, status } => {
+                self.looper_state = state;
+                self.looper_status = status;
+            }
             CoreEvent::ControlsRebound { controls } => {
                 self.control_views = project_controls(&controls);
             }
@@ -578,16 +615,7 @@ impl App {
                 .size(13)
                 .color(theme::TEXT_DIM),
             macro_view,
-            row![
-                button(text("* Rec").size(13)).on_press(Message::Looper(LooperButton::Record)),
-                button(text("> Play").size(13)).on_press(Message::Looper(LooperButton::Play)),
-                button(text("# Stop").size(13)).on_press(Message::Looper(LooperButton::Stop)),
-                text(self.looper_status.clone())
-                    .size(13)
-                    .color(theme::TEXT_DIM),
-            ]
-            .spacing(10)
-            .align_y(iced::Alignment::Center),
+            self.looper_row(),
             text("drag knobs and faders; hardware: Shift+pads = Rec/Play/Stop/Loop")
                 .size(11)
                 .color(theme::TEXT_DIM),
@@ -651,6 +679,49 @@ impl App {
         container(column![body, status_bar].spacing(8))
             .padding(12)
             .into()
+    }
+
+    fn looper_row(&self) -> iced::widget::Row<'_, Message> {
+        let state = self.looper_state;
+        let rec_active = matches!(
+            state,
+            LooperUiState::Armed | LooperUiState::Recording | LooperUiState::Overdub
+        );
+        let play_active = matches!(state, LooperUiState::Playing | LooperUiState::Overdub);
+        let stop_active = matches!(state, LooperUiState::Stopped);
+
+        let rec_label = match state {
+            LooperUiState::Overdub => "\u{25CF} Dub",
+            LooperUiState::Armed => "\u{25CF} Armed",
+            _ => "\u{25CF} Rec",
+        };
+        let status_color = match state {
+            LooperUiState::Recording | LooperUiState::Armed | LooperUiState::Overdub => {
+                theme::LOOP_REC
+            }
+            LooperUiState::Playing => theme::LOOP_PLAY,
+            _ => theme::TEXT_DIM,
+        };
+
+        row![
+            button(text(rec_label).size(13))
+                .padding([6, 14])
+                .style(looper_button_style(theme::LOOP_REC, rec_active))
+                .on_press(Message::Looper(LooperButton::Record)),
+            button(text("\u{25B6} Play").size(13))
+                .padding([6, 14])
+                .style(looper_button_style(theme::LOOP_PLAY, play_active))
+                .on_press(Message::Looper(LooperButton::Play)),
+            button(text("\u{25A0} Stop").size(13))
+                .padding([6, 14])
+                .style(looper_button_style(theme::LOOP_STOP, stop_active))
+                .on_press(Message::Looper(LooperButton::Stop)),
+            text(self.looper_status.clone())
+                .size(13)
+                .color(status_color),
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
     }
 
     fn view_settings(&self) -> Element<'_, Message> {

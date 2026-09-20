@@ -13,3 +13,6 @@ pub const TRACK: Color = Color::from_rgb(0.25, 0.25, 0.28);
 pub const PAD_OFF: Color = Color::from_rgb(0.20, 0.20, 0.23);
 pub const PAD_ON: Color = Color::from_rgb(0.95, 0.55, 0.25);
 pub const WARN: Color = Color::from_rgb(0.90, 0.45, 0.35);
+pub const LOOP_REC: Color = Color::from_rgb(0.90, 0.28, 0.30);
+pub const LOOP_PLAY: Color = Color::from_rgb(0.30, 0.72, 0.42);
+pub const LOOP_STOP: Color = Color::from_rgb(0.85, 0.66, 0.25);

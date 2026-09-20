@@ -104,6 +104,17 @@ impl Output {
     }
 }
 
+/// Coarse looper state for frontends (button highlighting, pad colors).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LooperUiState {
+    Empty,
+    Armed,
+    Recording,
+    Playing,
+    Overdub,
+    Stopped,
+}
+
 /// Pure looper state machine.
 #[derive(Debug)]
 pub struct LooperLogic {
@@ -120,6 +131,17 @@ impl LooperLogic {
     pub fn new() -> Self {
         LooperLogic {
             state: State::Empty,
+        }
+    }
+
+    pub fn ui_state(&self) -> LooperUiState {
+        match &self.state {
+            State::Empty => LooperUiState::Empty,
+            State::Armed => LooperUiState::Armed,
+            State::Recording { .. } => LooperUiState::Recording,
+            State::Playing { overdub: false, .. } => LooperUiState::Playing,
+            State::Playing { overdub: true, .. } => LooperUiState::Overdub,
+            State::Stopped { .. } => LooperUiState::Stopped,
         }
     }
 
@@ -408,6 +430,11 @@ fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<Lo
             if next_index >= events.len() {
                 let wrap_at = epoch + length * (cycle + 1) as u32;
                 if now >= wrap_at {
+                    // Close any notes the loop left hanging (e.g. a
+                    // NoteOn whose NoteOff arrived after the loop was
+                    // closed while recording); otherwise voices stack up
+                    // on every pass.
+                    release_held(producer, &mut held);
                     cycle += 1;
                     next_index = 0;
                 } else {

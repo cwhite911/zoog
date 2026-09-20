@@ -28,7 +28,7 @@ use lab_midi::rate::Coalescer;
 use lab_midi::sysex::{ColorTarget, display_text, init, pad_color};
 
 use crate::browser::{BrowseItem, Browser};
-use crate::looper::{LooperButton, LooperCommand, LooperLogic};
+use crate::looper::{LooperButton, LooperCommand, LooperLogic, LooperUiState};
 use crate::mapping::{Control, MacroControls, MappingFile};
 
 pub const CLIENT_NAME: &str = "benchlab";
@@ -200,8 +200,11 @@ pub enum CoreEvent {
     },
     /// The hardware controller connected or disconnected (hotplug).
     DeviceConnected(bool),
-    /// Looper status line changed.
-    Looper(String),
+    /// Looper state or status line changed.
+    Looper {
+        state: LooperUiState,
+        status: String,
+    },
     /// Library rescan finished; fresh preset list attached.
     LibraryRescanned {
         presets: Vec<PresetInfo>,
@@ -950,9 +953,30 @@ impl ControlThread {
             let _ = self.looper_tx.send(command);
         }
         if let Some(status) = output.status {
-            let _ = self.events.send(CoreEvent::Looper(status.clone()));
+            let _ = self.events.send(CoreEvent::Looper {
+                state: self.looper.ui_state(),
+                status: status.clone(),
+            });
             let line2 = status.trim_start_matches("loop: ").to_string();
             self.show("Loop", &line2);
+            self.paint_pads();
+        }
+    }
+
+    /// Pad backlights double as the looper's record light.
+    fn paint_pads(&mut self) {
+        let (r, g, b) = match self.looper.ui_state() {
+            LooperUiState::Empty => (6, 28, 44),
+            LooperUiState::Armed => (70, 12, 12),
+            LooperUiState::Recording => (110, 6, 6),
+            LooperUiState::Overdub => (110, 50, 6),
+            LooperUiState::Playing => (10, 70, 22),
+            LooperUiState::Stopped => (55, 40, 8),
+        };
+        if let Some(device) = self.device.device_mut() {
+            for pad in 0..8 {
+                let _ = device.send(&pad_color(ColorTarget::PadTemporary(pad), r, g, b));
+            }
         }
     }
 
@@ -967,12 +991,10 @@ impl ControlThread {
     fn greet_device(&mut self) {
         if let Some(device) = self.device.device_mut() {
             let _ = device.send(&init());
-            // A dim blue wash on all pads marks "benchlab connected"
-            // (temporary colors, verified to survive taps in DAW mode).
-            for pad in 0..8 {
-                let _ = device.send(&pad_color(ColorTarget::PadTemporary(pad), 6, 28, 44));
-            }
         }
+        // Pad wash marks "benchlab connected" and doubles as the looper
+        // state light (temporary colors survive taps in DAW mode).
+        self.paint_pads();
         let title = self.title.clone();
         self.show(&title, "");
     }
@@ -1023,6 +1045,9 @@ impl ControlThread {
         let mut coalescer: Coalescer<(String, String)> = Coalescer::new(Duration::from_millis(33));
         let mut revert_at: Option<Instant> = None;
         let mut last_hotplug_check = Instant::now();
+        let mut last_looper_status = self.looper.status();
+        let mut last_looper_state = self.looper.ui_state();
+        let mut last_looper_refresh = Instant::now();
 
         self.greet_device();
 
@@ -1219,6 +1244,21 @@ impl ControlThread {
                 revert_at = None;
                 let title = self.title.clone();
                 self.show(&title, "");
+            }
+            // Keep frontends in sync with looper time and note-driven
+            // transitions (armed -> recording happens without a button).
+            if now.duration_since(last_looper_refresh) >= Duration::from_millis(500) {
+                last_looper_refresh = now;
+                let status = self.looper.status();
+                let state = self.looper.ui_state();
+                if status != last_looper_status || state != last_looper_state {
+                    last_looper_status = status.clone();
+                    let _ = self.events.send(CoreEvent::Looper { state, status });
+                    if state != last_looper_state {
+                        last_looper_state = state;
+                        self.paint_pads();
+                    }
+                }
             }
         }
     }

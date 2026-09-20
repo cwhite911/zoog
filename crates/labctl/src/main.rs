@@ -424,7 +424,7 @@ fn run_play(args: &PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             CoreEvent::PresetLoaded { name, .. } => println!("loaded preset {name:?}"),
-            CoreEvent::Looper(status) => println!("{status}"),
+            CoreEvent::Looper { status, .. } => println!("{status}"),
             CoreEvent::DeviceConnected(connected) => println!(
                 "controller {}",
                 if connected {
