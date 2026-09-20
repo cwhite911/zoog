@@ -10,6 +10,7 @@ use clack_extensions::note_ports::{NoteDialects, NotePortInfoBuffer, PluginNoteP
 use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent};
 use clack_host::events::{EventFlags, Match};
 use clack_host::prelude::*;
+use clack_host::utils::Cookie;
 use rtrb::Consumer;
 
 use crate::host::BenchHost;
@@ -47,6 +48,10 @@ impl RtMidi {
 pub struct ParamChange {
     pub param_id: u32,
     pub value: f64,
+    /// The param's cookie from `clap.params` info (pointer as usize; 0 for
+    /// null). Some plugins (Odin2 2.4.1) crash on a null cookie despite the
+    /// spec allowing it, so the real cookie always rides along.
+    pub cookie: usize,
 }
 
 /// Where the plugin wants its note events, discovered via `clap.note-ports`.
@@ -117,12 +122,20 @@ impl EventCollector {
 
         if let Some(params) = params {
             while let Ok(change) = params.pop() {
-                self.clap_events.push(&ParamValueEvent::new(
-                    0,
-                    ClapId::new(change.param_id),
-                    Pckn::match_all(),
-                    change.value,
-                ));
+                // SAFETY: the cookie was read from this same plugin
+                // instance's param_info and is refreshed whenever params
+                // are re-enumerated (preset loads); this host never
+                // invalidates cookies via a full rescan.
+                let event = unsafe {
+                    ParamValueEvent::new(
+                        0,
+                        ClapId::new(change.param_id),
+                        Pckn::match_all(),
+                        change.value,
+                    )
+                    .with_cookie(Cookie::from_raw(change.cookie as *mut std::ffi::c_void))
+                };
+                self.clap_events.push(&event);
             }
         }
 

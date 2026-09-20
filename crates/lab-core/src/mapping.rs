@@ -86,6 +86,9 @@ pub struct Binding {
     /// patch. Always true unless `label-from-param` is set and the live
     /// name is the unassigned marker.
     pub active: bool,
+    /// The param's cookie (see `ParamChange::cookie`), refreshed on preset
+    /// loads.
+    cookie: usize,
     /// The label from the mapping file, kept as the fallback.
     file_label: String,
     label_from_param: bool,
@@ -239,6 +242,7 @@ impl MacroControls {
                 lo: entry.min.unwrap_or(param.min_value),
                 hi: entry.max.unwrap_or(param.max_value),
                 active: true,
+                cookie: param.cookie,
                 file_label: entry.label.clone(),
                 label_from_param: entry.label_from_param,
                 name_prefix: entry.param_name.clone(),
@@ -277,6 +281,7 @@ impl MacroControls {
             change: ParamChange {
                 param_id: binding.param_id,
                 value,
+                cookie: binding.cookie,
             },
             normalized,
             label: binding.label.clone(),
@@ -300,6 +305,7 @@ impl MacroControls {
             change: ParamChange {
                 param_id: binding.param_id,
                 value,
+                cookie: binding.cookie,
             },
             normalized,
             label: binding.label.clone(),
@@ -330,6 +336,7 @@ impl MacroControls {
         for binding in self.bindings.values_mut() {
             if let Some(param) = params.iter().find(|p| p.id == binding.param_id) {
                 binding.refresh_label(&param.name);
+                binding.cookie = param.cookie;
             }
         }
         for takeover in self.takeover.values_mut() {
@@ -396,6 +403,7 @@ param-id = 200
             value: Some(0.0),
             value_text: None,
             is_automatable: true,
+            cookie: 0,
         };
         vec![
             ParamDescription {

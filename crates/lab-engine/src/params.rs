@@ -19,6 +19,10 @@ pub struct ParamDescription {
     /// Human-readable rendering of `value`, when the plugin provides one.
     pub value_text: Option<String>,
     pub is_automatable: bool,
+    /// The plugin's opaque per-param cookie pointer, carried as usize so it
+    /// can cross threads. Must be passed back in param events: some
+    /// plugins (Odin2 2.4.1) dereference it without a null check.
+    pub cookie: usize,
 }
 
 /// Enumerates every parameter the plugin exposes. Returns an empty list if
@@ -55,6 +59,7 @@ pub fn list_params(instance: &mut PluginInstance<BenchHost>) -> Vec<ParamDescrip
             value,
             value_text,
             is_automatable: info.flags.contains(ParamInfoFlags::IS_AUTOMATABLE),
+            cookie: info.cookie.as_raw() as usize,
         });
     }
     out
