@@ -28,6 +28,7 @@ use lab_midi::rate::Coalescer;
 use lab_midi::sysex::{ColorTarget, display_text, init, pad_color};
 
 use crate::browser::{BrowseItem, Browser};
+use crate::looper::{LooperButton, LooperCommand, LooperLogic};
 use crate::mapping::{Control, MacroControls, MappingFile};
 
 pub const CLIENT_NAME: &str = "benchlab";
@@ -111,6 +112,8 @@ pub enum CoreCommand {
         favorite: bool,
     },
     RescanLibrary,
+    /// A looper transport button pressed in the GUI.
+    Looper(LooperButton),
     Shutdown,
 }
 
@@ -197,6 +200,8 @@ pub enum CoreEvent {
     },
     /// The hardware controller connected or disconnected (hotplug).
     DeviceConnected(bool),
+    /// Looper status line changed.
+    Looper(String),
     /// Library rescan finished; fresh preset list attached.
     LibraryRescanned {
         presets: Vec<PresetInfo>,
@@ -282,6 +287,8 @@ enum ToControl {
         midi: rtrb::Producer<RtMidi>,
         params: rtrb::Producer<ParamChange>,
     },
+    /// A looper transport button pressed in the GUI.
+    Looper(LooperButton),
 }
 
 type AnyError = Box<dyn std::error::Error>;
@@ -380,6 +387,8 @@ fn host_thread(
     // Rings and channels.
     let (midi_producer, midi_consumer) = rtrb::RingBuffer::<RtMidi>::new(1024);
     let (param_producer, param_consumer) = rtrb::RingBuffer::<ParamChange>::new(256);
+    let (looper_producer, looper_consumer) = rtrb::RingBuffer::<RtMidi>::new(512);
+    let looper_tx = crate::looper::spawn(looper_producer);
     let (from_control_tx, from_control_rx) = channel::<FromControl>();
     let (to_control_tx, to_control_rx) = channel::<ToControl>();
 
@@ -400,6 +409,8 @@ fn host_thread(
             from_host: to_control_rx,
             events: events.clone(),
             title: plugin_title.clone(),
+            looper: LooperLogic::new(),
+            looper_tx: looper_tx.clone(),
         };
         thread::Builder::new()
             .name("benchlab-control".to_string())
@@ -412,7 +423,13 @@ fn host_thread(
     let mut _stream = None;
     let mut audio_retry_at: Option<Instant> = None;
     if let Some(instance) = instance.as_mut() {
-        match activate_to_stream(instance, midi_consumer, Some(param_consumer), config.engine) {
+        match activate_to_stream(
+            instance,
+            midi_consumer,
+            Some(looper_consumer),
+            Some(param_consumer),
+            config.engine,
+        ) {
             Ok((stream, audio_stats, info)) => {
                 _stream = Some(stream);
                 stats = Some(audio_stats);
@@ -534,6 +551,9 @@ fn host_thread(
                 Ok(CoreCommand::SetFavorite { id, favorite }) => {
                     let _ = library.set_favorite(id, favorite);
                 }
+                Ok(CoreCommand::Looper(button)) => {
+                    let _ = to_control_tx.send(ToControl::Looper(button));
+                }
                 Ok(CoreCommand::RescanLibrary) => {
                     if let Some(found) = &plugin {
                         match scan_library(&mut library, found) {
@@ -630,9 +650,12 @@ fn host_thread(
                 }
                 let (midi_producer, midi_consumer) = rtrb::RingBuffer::<RtMidi>::new(1024);
                 let (param_producer, param_consumer) = rtrb::RingBuffer::<ParamChange>::new(256);
+                let (looper_producer, looper_consumer) = rtrb::RingBuffer::<RtMidi>::new(512);
+                let _ = looper_tx.send(LooperCommand::Ring(looper_producer));
                 match activate_to_stream(
                     instance,
                     midi_consumer,
+                    Some(looper_consumer),
                     Some(param_consumer),
                     config.engine,
                 ) {
@@ -914,9 +937,25 @@ struct ControlThread {
     from_host: Receiver<ToControl>,
     events: Sender<CoreEvent>,
     title: String,
+    looper: LooperLogic,
+    looper_tx: Sender<LooperCommand>,
 }
 
 impl ControlThread {
+    /// Drives the looper state machine from a transport button, sending
+    /// scheduler commands and surfacing the status on display and events.
+    fn handle_looper(&mut self, button: LooperButton, now: Instant) {
+        let output = self.looper.press(button, now);
+        if let Some(command) = output.command {
+            let _ = self.looper_tx.send(command);
+        }
+        if let Some(status) = output.status {
+            let _ = self.events.send(CoreEvent::Looper(status.clone()));
+            let line2 = status.trim_start_matches("loop: ").to_string();
+            self.show("Loop", &line2);
+        }
+    }
+
     fn show(&mut self, line1: &str, line2: &str) {
         if let Some(device) = self.device.device_mut() {
             let _ = device.send(&display_text(line1, line2));
@@ -1011,6 +1050,19 @@ impl ControlThread {
                     | DeviceEvent::PadUp { .. }
                     | DeviceEvent::PadPressure { .. }) => {
                         if let Some(rt) = RtMidi::from_bytes(msg.timestamp_us, &msg.bytes) {
+                            // Looper capture: note events only.
+                            if self.looper.captures_notes()
+                                && matches!(
+                                    event,
+                                    DeviceEvent::NoteOn { .. }
+                                        | DeviceEvent::NoteOff { .. }
+                                        | DeviceEvent::PadDown { .. }
+                                        | DeviceEvent::PadUp { .. }
+                                )
+                                && let Some(command) = self.looper.note(rt.bytes, rt.len, now)
+                            {
+                                let _ = self.looper_tx.send(command);
+                            }
                             let _ = self.midi_producer.push(rt);
                         }
                         match event {
@@ -1085,6 +1137,22 @@ impl ControlThread {
                             revert_at = None;
                         }
                     }
+                    DeviceEvent::Transport {
+                        control,
+                        pressed: true,
+                    } => {
+                        use lab_midi::event::TransportControl as T;
+                        let button = match control {
+                            T::Record => Some(LooperButton::Record),
+                            T::Loop => Some(LooperButton::Loop),
+                            T::Play => Some(LooperButton::Play),
+                            T::Stop => Some(LooperButton::Stop),
+                            T::Tap => None,
+                        };
+                        if let Some(button) = button {
+                            self.handle_looper(button, now);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1116,6 +1184,9 @@ impl ControlThread {
                     ToControl::Rings { midi, params } => {
                         self.midi_producer = midi;
                         self.param_producer = params;
+                    }
+                    ToControl::Looper(button) => {
+                        self.handle_looper(button, now);
                     }
                     ToControl::GuiControl {
                         control,

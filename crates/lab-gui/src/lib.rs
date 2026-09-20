@@ -12,6 +12,7 @@ use iced::{Element, Fill, Length, Subscription, Task, keyboard};
 use lab_core::app::{
     CoreCommand, CoreConfig, CoreEvent, CoreHandle, EngineConfig, PresetInfo, start,
 };
+use lab_core::looper::LooperButton;
 use lab_core::mapping::Control;
 
 use macro_panel::{ControlView, MacroPanel};
@@ -161,6 +162,7 @@ pub enum Message {
     Key(keyboard::Event),
     WindowResized(iced::Size),
     EngineSelected(String),
+    Looper(LooperButton),
     OpenSettings(bool),
     Rescan,
 }
@@ -201,6 +203,7 @@ struct App {
     control_views: Vec<ControlView>,
     pads: [bool; 8],
     stats: Stats,
+    looper_status: String,
     last_error: Option<String>,
     page: Page,
 }
@@ -235,6 +238,7 @@ impl App {
                 control_views: Vec::new(),
                 pads: [false; 8],
                 stats: Stats::default(),
+                looper_status: "loop: empty".to_string(),
                 last_error: None,
                 page: Page::Main,
             },
@@ -334,6 +338,7 @@ impl App {
                 }
             }
             Message::WindowResized(size) => save_window_size(size),
+            Message::Looper(button) => self.send(CoreCommand::Looper(button)),
             Message::EngineSelected(name) => {
                 if let Some(engine) = self.engines.iter().find(|e| e.name == name)
                     && engine.id != self.boot.plugin_match
@@ -424,6 +429,7 @@ impl App {
                 return self.scroll_to_selected();
             }
             CoreEvent::DeviceConnected(connected) => self.device_connected = connected,
+            CoreEvent::Looper(status) => self.looper_status = status,
             CoreEvent::ControlsRebound { controls } => {
                 self.control_views = project_controls(&controls);
             }
@@ -572,7 +578,17 @@ impl App {
                 .size(13)
                 .color(theme::TEXT_DIM),
             macro_view,
-            text("drag knobs and faders; hardware moves mirror here")
+            row![
+                button(text("* Rec").size(13)).on_press(Message::Looper(LooperButton::Record)),
+                button(text("> Play").size(13)).on_press(Message::Looper(LooperButton::Play)),
+                button(text("# Stop").size(13)).on_press(Message::Looper(LooperButton::Stop)),
+                text(self.looper_status.clone())
+                    .size(13)
+                    .color(theme::TEXT_DIM),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+            text("drag knobs and faders; hardware: Shift+pads = Rec/Play/Stop/Loop")
                 .size(11)
                 .color(theme::TEXT_DIM),
         ]

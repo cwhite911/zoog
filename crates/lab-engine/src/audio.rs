@@ -294,6 +294,7 @@ pub struct StreamProcessor {
     buffers: PluginBuffers,
     events: EventCollector,
     midi: Consumer<RtMidi>,
+    looper: Option<Consumer<RtMidi>>,
     params: Option<Consumer<ParamChange>>,
     stats: Arc<AudioStats>,
     sample_rate: u64,
@@ -307,9 +308,12 @@ impl StreamProcessor {
         let frames = data.len() / 2;
         self.buffers.ensure_frames(frames);
 
-        let events = self
-            .events
-            .collect(&mut self.midi, self.params.as_mut(), frames as u64);
+        let events = self.events.collect(
+            &mut self.midi,
+            self.looper.as_mut(),
+            self.params.as_mut(),
+            frames as u64,
+        );
         let (ins, mut outs) = self.buffers.prepare(frames);
 
         match self.processor.process(
@@ -387,6 +391,7 @@ impl Error for AudioError {}
 pub fn activate_to_stream(
     instance: &mut PluginInstance<BenchHost>,
     midi: Consumer<RtMidi>,
+    looper: Option<Consumer<RtMidi>>,
     params: Option<Consumer<ParamChange>>,
     config: EngineConfig,
 ) -> Result<(cpal::Stream, Arc<AudioStats>, AudioInfo), Box<dyn Error>> {
@@ -442,6 +447,7 @@ pub fn activate_to_stream(
         buffers: PluginBuffers::new(layout_in, layout_out, buffer_frames.max(1024) as usize),
         events: EventCollector::new(sample_rate as u64, note_port),
         midi,
+        looper,
         params,
         stats: stats.clone(),
         sample_rate: sample_rate as u64,

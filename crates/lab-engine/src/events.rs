@@ -115,10 +115,19 @@ impl EventCollector {
     pub fn collect(
         &mut self,
         consumer: &mut Consumer<RtMidi>,
+        looper: Option<&mut Consumer<RtMidi>>,
         params: Option<&mut Consumer<ParamChange>>,
         sample_count: u64,
     ) -> InputEvents<'_> {
         self.clap_events.clear();
+
+        // Looper playback: already scheduled in wall time by its thread,
+        // so events land at the start of the current block.
+        if let Some(looper) = looper {
+            while let Ok(msg) = looper.pop() {
+                self.push_message(&msg, 0);
+            }
+        }
 
         if let Some(params) = params {
             while let Ok(change) = params.pop() {

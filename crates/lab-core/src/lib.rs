@@ -3,5 +3,6 @@
 
 pub mod app;
 pub mod browser;
+pub mod looper;
 pub mod mapping;
 pub mod takeover;
