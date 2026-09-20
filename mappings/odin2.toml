@@ -1,0 +1,82 @@
+# Macro mapping for Odin2 (com.thewavewarden.odin2).
+#
+# Param ids observed from the installed plugin (Odin2 2.4.1) via
+# `labctl params --plugin Odin2`, 2026-09-19. Names are copied exactly as
+# the plugin reports them (including "Wavetble Position").
+#
+# Encoders: classic subtractive macro set around filter 1 and osc 1.
+# Faders: amp envelope A/D/S/R, mirroring the Surge XT layout.
+
+plugin-id = "com.thewavewarden.odin2"
+
+[[encoder]]
+index = 1
+label = "Cutoff"
+param-id = 1489561359
+param-name = "Filter1 Frequency"
+
+[[encoder]]
+index = 2
+label = "Resonance"
+param-id = 3511744809
+param-name = "Filter1 Resonance"
+
+[[encoder]]
+index = 3
+label = "Env Amount"
+param-id = 3511732598
+param-name = "Filter1 Envelope Amount"
+
+[[encoder]]
+index = 4
+label = "Fil Decay"
+param-id = 4109406176
+param-name = "FilterEnv Decay"
+
+[[encoder]]
+index = 5
+label = "Wave Pos"
+param-id = 1746185654
+param-name = "Osc1 Wavetble Position"
+
+[[encoder]]
+index = 6
+label = "Distortion"
+param-id = 1523534484
+param-name = "Distortion DryWet"
+
+[[encoder]]
+index = 7
+label = "Glide"
+param-id = 98444197
+param-name = "Glide"
+
+[[encoder]]
+index = 8
+label = "Master"
+param-id = 3213699682
+param-name = "Master"
+
+[[fader]]
+index = 1
+label = "Attack"
+param-id = 1023200771
+param-name = "AmpEnv Attack"
+
+[[fader]]
+index = 2
+label = "Decay"
+param-id = 3221902495
+param-name = "AmpEnv Decay"
+
+[[fader]]
+index = 3
+label = "Sustain"
+param-id = 477919688
+param-name = "AmpEnv Sustain"
+
+[[fader]]
+index = 4
+label = "Release"
+param-id = 3420405676
+param-name = "AmpEnv Release"

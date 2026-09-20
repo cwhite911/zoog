@@ -38,6 +38,45 @@ pub fn scan_all() -> Vec<FoundPlugin> {
     found
 }
 
+/// Scans the standard CLAP paths, returning plugins and per-file load
+/// failures (e.g. a binary built against a newer glibc).
+pub fn scan_all_with_errors() -> (Vec<FoundPlugin>, Vec<(PathBuf, String)>) {
+    let paths = clack_finder::standard_clap_paths();
+    let mut found = Vec::new();
+    let mut failures = Vec::new();
+    for file in ClapFinder::new(paths) {
+        let path = file.bundle_path();
+        match try_list_plugins_in_file(path) {
+            Ok(plugins) => found.extend(plugins),
+            Err(e) => failures.push((path.to_path_buf(), e)),
+        }
+    }
+    (found, failures)
+}
+
+fn try_list_plugins_in_file(path: &Path) -> Result<Vec<FoundPlugin>, String> {
+    // SAFETY: loading a plugin means running arbitrary library init code;
+    // this is inherent to hosting. Same approach as the clack example.
+    let entry = unsafe { PluginEntry::load(path) }.map_err(|e| e.to_string())?;
+    let Some(factory) = entry.get_plugin_factory() else {
+        return Err("no plugin factory".to_string());
+    };
+    Ok(factory
+        .plugin_descriptors()
+        .filter_map(|descriptor| {
+            Some(FoundPlugin {
+                id: descriptor.id()?.to_str().ok()?.to_string(),
+                name: descriptor.name().map(|n| n.to_string_lossy().to_string()),
+                version: descriptor
+                    .version()
+                    .map(|v| v.to_string_lossy().to_string()),
+                path: path.to_path_buf(),
+                entry: entry.clone(),
+            })
+        })
+        .collect())
+}
+
 /// Lists the plugins in one CLAP file. Returns an empty list when the file
 /// cannot be loaded or has no plugin factory.
 pub fn list_plugins_in_file(path: &Path) -> Vec<FoundPlugin> {

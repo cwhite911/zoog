@@ -221,12 +221,15 @@ fn cmd_monitor(args: &[String]) -> ExitCode {
 }
 
 fn cmd_plugins() -> ExitCode {
-    let plugins = lab_engine::discovery::scan_all();
+    let (plugins, failures) = lab_engine::discovery::scan_all_with_errors();
     if plugins.is_empty() {
         println!("no CLAP plugins found in the search paths");
     }
     for plugin in &plugins {
         println!("{plugin}\n    {}", plugin.path.display());
+    }
+    for (path, error) in &failures {
+        println!("UNLOADABLE {}\n    {error}", path.display());
     }
     ExitCode::SUCCESS
 }

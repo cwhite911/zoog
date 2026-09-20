@@ -33,6 +33,6 @@ assets = [
     ["assets/benchlab-256.png", "usr/share/icons/hicolor/256x256/apps/benchlab.png", "644"],
     ["../../packaging/benchlab-128.png", "usr/share/icons/hicolor/128x128/apps/benchlab.png", "644"],
     ["../../packaging/benchlab-48.png", "usr/share/icons/hicolor/48x48/apps/benchlab.png", "644"],
-    ["../../mappings/surge-xt.toml", "usr/share/benchlab/mappings/", "644"],
+    ["../../mappings/*.toml", "usr/share/benchlab/mappings/", "644"],
     ["../../README.md", "usr/share/doc/benchlab/README", "644"],
 ]

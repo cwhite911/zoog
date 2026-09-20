@@ -693,20 +693,17 @@ fn bind_mapping(
     params: &[ParamDescription],
     events: &Sender<CoreEvent>,
 ) -> (Option<MacroControls>, Vec<ControlInfo>) {
-    // Search order: explicit path, working directory (development),
-    // user config, system install location (.deb).
-    let path = config.mapping_path.clone().or_else(|| {
-        let mut candidates = vec![PathBuf::from("mappings/surge-xt.toml")];
-        if let Some(dirs) = directories::ProjectDirs::from("", "", "benchlab") {
-            candidates.push(dirs.config_dir().join("mappings/surge-xt.toml"));
-        }
-        candidates.push(PathBuf::from("/usr/share/benchlab/mappings/surge-xt.toml"));
-        candidates.into_iter().find(|p| p.exists())
-    });
+    // Explicit path wins; otherwise scan the mapping directories
+    // (working directory for development, user config, system install)
+    // for a file whose plugin-id matches the loaded engine.
+    let path = config
+        .mapping_path
+        .clone()
+        .or_else(|| find_mapping_for(plugin_id));
     let Some(path) = path else {
-        let _ = events.send(CoreEvent::Error(
-            "no mapping file found; encoders and faders inactive".to_string(),
-        ));
+        let _ = events.send(CoreEvent::Error(format!(
+            "no mapping file for {plugin_id}; encoders and faders inactive"
+        )));
         return (None, Vec::new());
     };
     if !path.exists() {
@@ -754,6 +751,36 @@ fn control_infos(controls: &MacroControls) -> Vec<ControlInfo> {
             active: binding.active,
         })
         .collect()
+}
+
+/// Finds the mapping file whose `plugin-id` matches, searching the
+/// development, user, and system mapping directories in that order.
+fn find_mapping_for(plugin_id: &str) -> Option<PathBuf> {
+    let mut dirs = vec![PathBuf::from("mappings")];
+    if let Some(project) = directories::ProjectDirs::from("", "", "benchlab") {
+        dirs.push(project.config_dir().join("mappings"));
+    }
+    dirs.push(PathBuf::from("/usr/share/benchlab/mappings"));
+
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            if let Ok(file) = MappingFile::load(&path)
+                && file.plugin_id == plugin_id
+            {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 fn open_library(config: &CoreConfig) -> Result<Library, AnyError> {
