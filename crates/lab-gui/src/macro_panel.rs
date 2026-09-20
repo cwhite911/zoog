@@ -21,9 +21,16 @@ pub struct ControlView {
     pub active: bool,
 }
 
+/// Per-pad visual: pressed state and, in Loops mode, a slot color.
+#[derive(Debug, Clone, Copy)]
+pub struct PadView {
+    pub down: bool,
+    pub slot_color: Option<Color>,
+}
+
 pub struct MacroPanel<'a> {
     pub controls: &'a [ControlView],
-    pub pads: &'a [bool; 8],
+    pub pads: [PadView; 8],
 }
 
 #[derive(Debug, Default)]
@@ -95,13 +102,20 @@ impl canvas::Program<Message> for MacroPanel<'_> {
                     y: 0.0,
                     ..bounds
                 };
-                let control = self.hit_test(local, position)?;
-                state.drag = Some(Drag {
-                    control,
-                    value: self.value_of(control),
-                    last_y: position.y,
-                });
-                Some(canvas::Action::request_redraw().and_capture())
+                if let Some(control) = self.hit_test(local, position) {
+                    state.drag = Some(Drag {
+                        control,
+                        value: self.value_of(control),
+                        last_y: position.y,
+                    });
+                    return Some(canvas::Action::request_redraw().and_capture());
+                }
+                for i in 0..8u8 {
+                    if pad_rect(i, local).contains(position) {
+                        return Some(canvas::Action::publish(Message::PadClicked(i)).and_capture());
+                    }
+                }
+                None?
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 let drag = state.drag.as_mut()?;
@@ -146,16 +160,23 @@ impl canvas::Program<Message> for MacroPanel<'_> {
         }
         for i in 0..8u8 {
             let rect = pad_rect(i, local);
-            let on = self.pads[i as usize];
-            frame.fill_rectangle(
-                Point::new(rect.x, rect.y),
-                rect.size(),
-                if on { theme::PAD_ON } else { theme::PAD_OFF },
-            );
+            let pad = self.pads[i as usize];
+            let fill = if pad.down {
+                theme::PAD_ON
+            } else if let Some(color) = pad.slot_color {
+                color
+            } else {
+                theme::PAD_OFF
+            };
+            frame.fill_rectangle(Point::new(rect.x, rect.y), rect.size(), fill);
             frame.fill_text(Text {
                 content: format!("{}", i + 1),
                 position: Point::new(rect.x + rect.width / 2.0, rect.y + rect.height / 2.0),
-                color: if on { Color::BLACK } else { theme::TEXT_DIM },
+                color: if pad.down || pad.slot_color.is_some() {
+                    Color::BLACK
+                } else {
+                    theme::TEXT_DIM
+                },
                 size: 12.0.into(),
                 align_x: iced::widget::text::Alignment::Center,
                 align_y: iced::alignment::Vertical::Center,

@@ -28,7 +28,7 @@ use lab_midi::rate::Coalescer;
 use lab_midi::sysex::{ColorTarget, display_text, init, pad_color};
 
 use crate::browser::{BrowseItem, Browser};
-use crate::looper::{LooperButton, LooperCommand, LooperLogic, LooperUiState};
+use crate::looper::{LooperButton, LooperLogic, LooperUiState, PlayerMsg, SLOTS, pad_action};
 use crate::mapping::{Control, MacroControls, MappingFile};
 
 pub const CLIENT_NAME: &str = "benchlab";
@@ -98,6 +98,13 @@ impl SessionState {
     }
 }
 
+/// What the eight pads do: play notes into the engine, or launch loops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PadMode {
+    Notes,
+    Loops,
+}
+
 /// Commands into the core (GUI or CLI side).
 #[derive(Debug, Clone)]
 pub enum CoreCommand {
@@ -114,6 +121,10 @@ pub enum CoreCommand {
     RescanLibrary,
     /// A looper transport button pressed in the GUI.
     Looper(LooperButton),
+    /// A pad tapped in the GUI (slot trigger in Loops mode).
+    LooperPad(u8),
+    /// Switch what the pads do.
+    SetPadMode(PadMode),
     Shutdown,
 }
 
@@ -200,9 +211,12 @@ pub enum CoreEvent {
     },
     /// The hardware controller connected or disconnected (hotplug).
     DeviceConnected(bool),
-    /// Looper state or status line changed.
+    /// Looper state changed: pad mode, focused slot, all slot states, and
+    /// a status line for the focused slot.
     Looper {
-        state: LooperUiState,
+        pad_mode: PadMode,
+        focused: usize,
+        slots: [LooperUiState; SLOTS],
         status: String,
     },
     /// Library rescan finished; fresh preset list attached.
@@ -292,6 +306,10 @@ enum ToControl {
     },
     /// A looper transport button pressed in the GUI.
     Looper(LooperButton),
+    /// A pad tapped in the GUI.
+    LooperPad(u8),
+    /// Switch what the pads do.
+    PadMode(PadMode),
 }
 
 type AnyError = Box<dyn std::error::Error>;
@@ -412,7 +430,9 @@ fn host_thread(
             from_host: to_control_rx,
             events: events.clone(),
             title: plugin_title.clone(),
-            looper: LooperLogic::new(),
+            loops: (0..SLOTS).map(|_| LooperLogic::new()).collect(),
+            focused: 0,
+            pad_mode: PadMode::Notes,
             looper_tx: looper_tx.clone(),
         };
         thread::Builder::new()
@@ -557,6 +577,12 @@ fn host_thread(
                 Ok(CoreCommand::Looper(button)) => {
                     let _ = to_control_tx.send(ToControl::Looper(button));
                 }
+                Ok(CoreCommand::LooperPad(pad)) => {
+                    let _ = to_control_tx.send(ToControl::LooperPad(pad));
+                }
+                Ok(CoreCommand::SetPadMode(mode)) => {
+                    let _ = to_control_tx.send(ToControl::PadMode(mode));
+                }
                 Ok(CoreCommand::RescanLibrary) => {
                     if let Some(found) = &plugin {
                         match scan_library(&mut library, found) {
@@ -654,7 +680,7 @@ fn host_thread(
                 let (midi_producer, midi_consumer) = rtrb::RingBuffer::<RtMidi>::new(1024);
                 let (param_producer, param_consumer) = rtrb::RingBuffer::<ParamChange>::new(256);
                 let (looper_producer, looper_consumer) = rtrb::RingBuffer::<RtMidi>::new(512);
-                let _ = looper_tx.send(LooperCommand::Ring(looper_producer));
+                let _ = looper_tx.send(PlayerMsg::Ring(looper_producer));
                 match activate_to_stream(
                     instance,
                     midi_consumer,
@@ -940,32 +966,118 @@ struct ControlThread {
     from_host: Receiver<ToControl>,
     events: Sender<CoreEvent>,
     title: String,
-    looper: LooperLogic,
-    looper_tx: Sender<LooperCommand>,
+    loops: Vec<LooperLogic>,
+    focused: usize,
+    pad_mode: PadMode,
+    looper_tx: Sender<PlayerMsg>,
 }
 
 impl ControlThread {
-    /// Drives the looper state machine from a transport button, sending
-    /// scheduler commands and surfacing the status on display and events.
-    fn handle_looper(&mut self, button: LooperButton, now: Instant) {
-        let output = self.looper.press(button, now);
-        if let Some(command) = output.command {
-            let _ = self.looper_tx.send(command);
-        }
-        if let Some(status) = output.status {
-            let _ = self.events.send(CoreEvent::Looper {
-                state: self.looper.ui_state(),
-                status: status.clone(),
-            });
-            let line2 = status.trim_start_matches("loop: ").to_string();
-            self.show("Loop", &line2);
-            self.paint_pads();
+    fn slot_states(&self) -> [LooperUiState; SLOTS] {
+        std::array::from_fn(|i| self.loops[i].ui_state())
+    }
+
+    fn slot_status(&self) -> String {
+        format!(
+            "loop {} {}",
+            self.focused + 1,
+            self.loops[self.focused]
+                .status()
+                .trim_start_matches("loop: ")
+        )
+    }
+
+    fn emit_looper(&mut self, status: String) {
+        let _ = self.events.send(CoreEvent::Looper {
+            pad_mode: self.pad_mode,
+            focused: self.focused,
+            slots: self.slot_states(),
+            status: status.clone(),
+        });
+        let line2 = status.trim_start_matches("loop ").to_string();
+        self.show("Loop", &line2);
+        self.paint_pads();
+    }
+
+    /// At most one slot may capture notes; cancel arming/overdub elsewhere.
+    fn ensure_exclusive_capture(&mut self, except: usize, now: Instant) {
+        for index in 0..SLOTS {
+            if index == except || !self.loops[index].captures_notes() {
+                continue;
+            }
+            match self.loops[index].ui_state() {
+                // Cancel an armed slot; switch overdub off.
+                LooperUiState::Armed | LooperUiState::Overdub => {
+                    let output = self.loops[index].press(LooperButton::Record, now);
+                    if let Some(command) = output.command {
+                        let _ = self.looper_tx.send(PlayerMsg::Slot(index, command));
+                    }
+                }
+                // A slot mid-recording keeps recording; new arms are
+                // refused in press_slot instead.
+                _ => {}
+            }
         }
     }
 
-    /// Pad backlights double as the looper's record light.
+    /// Drives the focused slot's state machine from a transport button.
+    fn handle_looper(&mut self, button: LooperButton, now: Instant) {
+        self.press_slot(self.focused, button, now);
+    }
+
+    fn press_slot(&mut self, slot: usize, button: LooperButton, now: Instant) {
+        self.focused = slot;
+        // Refuse arming a second recorder; close the first take first.
+        if button == LooperButton::Record
+            && matches!(
+                self.loops[slot].ui_state(),
+                LooperUiState::Empty | LooperUiState::Stopped
+            )
+            && let Some(busy) = (0..SLOTS)
+                .find(|&i| i != slot && self.loops[i].ui_state() == LooperUiState::Recording)
+        {
+            self.emit_looper(format!("loop {} still recording", busy + 1));
+            return;
+        }
+        let output = self.loops[slot].press(button, now);
+        if matches!(
+            self.loops[slot].ui_state(),
+            LooperUiState::Armed | LooperUiState::Overdub
+        ) {
+            self.ensure_exclusive_capture(slot, now);
+        }
+        if let Some(command) = output.command {
+            let _ = self.looper_tx.send(PlayerMsg::Slot(slot, command));
+        }
+        if output.status.is_some() {
+            self.emit_looper(self.slot_status());
+        }
+    }
+
+    /// A pad tap in Loops mode: one button per slot, action depending on
+    /// the slot's state.
+    fn tap_slot(&mut self, slot: usize, now: Instant) {
+        if slot >= SLOTS {
+            return;
+        }
+        let action = pad_action(self.loops[slot].ui_state());
+        self.press_slot(slot, action, now);
+    }
+
+    fn set_pad_mode(&mut self, mode: PadMode) {
+        if self.pad_mode != mode {
+            self.pad_mode = mode;
+            self.emit_looper(match mode {
+                PadMode::Loops => "pads: loop slots".to_string(),
+                PadMode::Notes => "pads: notes".to_string(),
+            });
+        }
+    }
+
+    /// Pad backlights: per-slot loop state in Loops mode, a single wash of
+    /// the focused slot's state in Notes mode.
     fn paint_pads(&mut self) {
-        let (r, g, b) = match self.looper.ui_state() {
+        let color = |state: LooperUiState| match state {
             LooperUiState::Empty => (6, 28, 44),
             LooperUiState::Armed => (70, 12, 12),
             LooperUiState::Recording => (110, 6, 6),
@@ -973,9 +1085,16 @@ impl ControlThread {
             LooperUiState::Playing => (10, 70, 22),
             LooperUiState::Stopped => (55, 40, 8),
         };
+        let states = self.slot_states();
+        let mode = self.pad_mode;
+        let focused = self.focused;
         if let Some(device) = self.device.device_mut() {
-            for pad in 0..8 {
-                let _ = device.send(&pad_color(ColorTarget::PadTemporary(pad), r, g, b));
+            for pad in 0..SLOTS {
+                let (r, g, b) = match mode {
+                    PadMode::Loops => color(states[pad]),
+                    PadMode::Notes => color(states[focused]),
+                };
+                let _ = device.send(&pad_color(ColorTarget::PadTemporary(pad as u8), r, g, b));
             }
         }
     }
@@ -1045,8 +1164,8 @@ impl ControlThread {
         let mut coalescer: Coalescer<(String, String)> = Coalescer::new(Duration::from_millis(33));
         let mut revert_at: Option<Instant> = None;
         let mut last_hotplug_check = Instant::now();
-        let mut last_looper_status = self.looper.status();
-        let mut last_looper_state = self.looper.ui_state();
+        let mut last_looper_status = self.slot_status();
+        let mut last_looper_states = self.slot_states();
         let mut last_looper_refresh = Instant::now();
 
         self.greet_device();
@@ -1074,19 +1193,32 @@ impl ControlThread {
                     | DeviceEvent::PadDown { .. }
                     | DeviceEvent::PadUp { .. }
                     | DeviceEvent::PadPressure { .. }) => {
-                        if let Some(rt) = RtMidi::from_bytes(msg.timestamp_us, &msg.bytes) {
+                        let is_pad = matches!(
+                            event,
+                            DeviceEvent::PadDown { .. }
+                                | DeviceEvent::PadUp { .. }
+                                | DeviceEvent::PadPressure { .. }
+                        );
+                        // In Loops mode the pads are slot triggers, not
+                        // notes: consume them here.
+                        if is_pad && self.pad_mode == PadMode::Loops {
+                            if let DeviceEvent::PadDown { index, .. } = event {
+                                self.tap_slot(index as usize, now);
+                            }
+                        } else if let Some(rt) = RtMidi::from_bytes(msg.timestamp_us, &msg.bytes) {
                             // Looper capture: note events only.
-                            if self.looper.captures_notes()
-                                && matches!(
-                                    event,
-                                    DeviceEvent::NoteOn { .. }
-                                        | DeviceEvent::NoteOff { .. }
-                                        | DeviceEvent::PadDown { .. }
-                                        | DeviceEvent::PadUp { .. }
-                                )
-                                && let Some(command) = self.looper.note(rt.bytes, rt.len, now)
+                            if matches!(
+                                event,
+                                DeviceEvent::NoteOn { .. }
+                                    | DeviceEvent::NoteOff { .. }
+                                    | DeviceEvent::PadDown { .. }
+                                    | DeviceEvent::PadUp { .. }
+                            ) && let Some(capturing) =
+                                (0..SLOTS).find(|&i| self.loops[i].captures_notes())
+                                && let Some(command) =
+                                    self.loops[capturing].note(rt.bytes, rt.len, now)
                             {
-                                let _ = self.looper_tx.send(command);
+                                let _ = self.looper_tx.send(PlayerMsg::Slot(capturing, command));
                             }
                             let _ = self.midi_producer.push(rt);
                         }
@@ -1172,7 +1304,15 @@ impl ControlThread {
                             T::Loop => Some(LooperButton::Loop),
                             T::Play => Some(LooperButton::Play),
                             T::Stop => Some(LooperButton::Stop),
-                            T::Tap => None,
+                            T::Tap => {
+                                // Shift+Tap flips the pads between notes
+                                // and loop slots.
+                                self.set_pad_mode(match self.pad_mode {
+                                    PadMode::Notes => PadMode::Loops,
+                                    PadMode::Loops => PadMode::Notes,
+                                });
+                                None
+                            }
                         };
                         if let Some(button) = button {
                             self.handle_looper(button, now);
@@ -1213,6 +1353,12 @@ impl ControlThread {
                     ToControl::Looper(button) => {
                         self.handle_looper(button, now);
                     }
+                    ToControl::LooperPad(pad) => {
+                        self.tap_slot(pad as usize, now);
+                    }
+                    ToControl::PadMode(mode) => {
+                        self.set_pad_mode(mode);
+                    }
                     ToControl::GuiControl {
                         control,
                         normalized,
@@ -1249,15 +1395,12 @@ impl ControlThread {
             // transitions (armed -> recording happens without a button).
             if now.duration_since(last_looper_refresh) >= Duration::from_millis(500) {
                 last_looper_refresh = now;
-                let status = self.looper.status();
-                let state = self.looper.ui_state();
-                if status != last_looper_status || state != last_looper_state {
+                let status = self.slot_status();
+                let states = self.slot_states();
+                if status != last_looper_status || states != last_looper_states {
                     last_looper_status = status.clone();
-                    let _ = self.events.send(CoreEvent::Looper { state, status });
-                    if state != last_looper_state {
-                        last_looper_state = state;
-                        self.paint_pads();
-                    }
+                    last_looper_states = states;
+                    self.emit_looper(status);
                 }
             }
         }

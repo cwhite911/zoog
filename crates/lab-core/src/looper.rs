@@ -50,8 +50,30 @@ pub enum LooperCommand {
     Stop,
     /// Drop the loop entirely.
     Clear,
+}
+
+/// Number of pad loop slots.
+pub const SLOTS: usize = 8;
+
+/// Messages to the playback thread.
+pub enum PlayerMsg {
+    /// A command for one loop slot.
+    Slot(usize, LooperCommand),
     /// Swap in a fresh producer after an audio stream rebuild.
     Ring(rtrb::Producer<RtMidi>),
+}
+
+/// The single-button behavior of a pad in Loops mode, given its slot's
+/// current state: record into empty, close a take, stop a playing loop,
+/// relaunch a stopped one.
+pub fn pad_action(state: LooperUiState) -> LooperButton {
+    match state {
+        LooperUiState::Empty | LooperUiState::Armed | LooperUiState::Recording => {
+            LooperButton::Record
+        }
+        LooperUiState::Playing | LooperUiState::Overdub => LooperButton::Stop,
+        LooperUiState::Stopped => LooperButton::Play,
+    }
 }
 
 /// The transport buttons the looper responds to.
@@ -304,7 +326,7 @@ impl LooperLogic {
 /// Spawns the playback thread. It owns its own producer into the audio
 /// callback and replays the loop with sleep-based scheduling (about a
 /// millisecond of jitter, well under one audio block).
-pub fn spawn(mut producer: rtrb::Producer<RtMidi>) -> Sender<LooperCommand> {
+pub fn spawn(mut producer: rtrb::Producer<RtMidi>) -> Sender<PlayerMsg> {
     let (tx, rx) = channel();
     thread::Builder::new()
         .name("benchlab-looper".to_string())
@@ -313,17 +335,23 @@ pub fn spawn(mut producer: rtrb::Producer<RtMidi>) -> Sender<LooperCommand> {
     tx
 }
 
-fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<LooperCommand>) {
-    let mut events: Vec<LoopEvent> = Vec::new();
-    let mut length = Duration::ZERO;
-    let mut playing = false;
-    let mut epoch = Instant::now();
-    let mut cycle: u64 = 0;
-    let mut next_index = 0usize;
-    // Notes the loop has switched on, to release on stop ([status, key]).
-    let mut held: Vec<[u8; 2]> = Vec::new();
+/// Playback state of one loop slot.
+#[derive(Default)]
+struct Slot {
+    events: Vec<LoopEvent>,
+    length: Duration,
+    playing: bool,
+    epoch: Option<Instant>,
+    cycle: u64,
+    next_index: usize,
+    /// Notes this slot has switched on ([status, key]).
+    held: Vec<[u8; 2]>,
+}
 
-    let push = |producer: &mut rtrb::Producer<RtMidi>, ev: &LoopEvent, held: &mut Vec<[u8; 2]>| {
+fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<PlayerMsg>) {
+    let mut slots: Vec<Slot> = (0..SLOTS).map(|_| Slot::default()).collect();
+
+    fn push(producer: &mut rtrb::Producer<RtMidi>, ev: &LoopEvent, held: &mut Vec<[u8; 2]>) {
         let status = ev.bytes[0] & 0xF0;
         if status == 0x90 && ev.bytes[2] > 0 {
             held.push([ev.bytes[0], ev.bytes[1]]);
@@ -335,9 +363,9 @@ fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<Lo
             len: ev.len,
             bytes: ev.bytes,
         });
-    };
+    }
 
-    let release_held = |producer: &mut rtrb::Producer<RtMidi>, held: &mut Vec<[u8; 2]>| {
+    fn release_held(producer: &mut rtrb::Producer<RtMidi>, held: &mut Vec<[u8; 2]>) {
         for [status, key] in held.drain(..) {
             let _ = producer.push(RtMidi {
                 timestamp_us: 0,
@@ -345,109 +373,118 @@ fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<Lo
                 bytes: [0x80 | (status & 0x0F), key, 0],
             });
         }
-    };
+    }
 
     loop {
-        // How long may we sleep before the next due event?
-        let timeout = if playing && !events.is_empty() {
-            let now = Instant::now();
-            let due = if next_index < events.len() {
-                epoch + length * cycle as u32 + events[next_index].offset
+        // Sleep until the earliest due event across all playing slots.
+        let now = Instant::now();
+        let mut timeout = Duration::from_millis(50);
+        for slot in slots.iter().filter(|s| s.playing && !s.events.is_empty()) {
+            let epoch = slot.epoch.unwrap_or(now);
+            let due = if slot.next_index < slot.events.len() {
+                epoch + slot.length * slot.cycle as u32 + slot.events[slot.next_index].offset
             } else {
-                epoch + length * (cycle + 1) as u32
+                epoch + slot.length * (slot.cycle + 1) as u32
             };
-            due.saturating_duration_since(now)
-                .min(Duration::from_millis(20))
-        } else {
-            Duration::from_millis(50)
-        };
+            timeout = timeout.min(due.saturating_duration_since(now));
+        }
+        timeout = timeout.min(Duration::from_millis(20));
 
         match commands.recv_timeout(timeout) {
-            Ok(LooperCommand::Start {
-                events: new_events,
-                length: new_length,
-            }) => {
-                release_held(producer, &mut held);
-                events = new_events;
-                events.sort_by_key(|e| e.offset);
-                length = new_length;
-                playing = true;
-                epoch = Instant::now();
-                cycle = 0;
-                next_index = 0;
-            }
-            Ok(LooperCommand::Overdub(mut extra)) => {
-                // Insert without disturbing the current playback position:
-                // events at or before the playhead this cycle wait for the
-                // next pass.
-                events.append(&mut extra);
-                events.sort_by_key(|e| e.offset);
-                if playing {
-                    let position = Instant::now().saturating_duration_since(epoch);
-                    let in_cycle_ns = position.as_nanos() % length.as_nanos().max(1);
-                    next_index = events
-                        .iter()
-                        .position(|e| e.offset.as_nanos() > in_cycle_ns)
-                        .unwrap_or(events.len());
+            Ok(PlayerMsg::Ring(new_producer)) => {
+                for slot in slots.iter_mut() {
+                    slot.held.clear();
                 }
-            }
-            Ok(LooperCommand::Restart) => {
-                if !events.is_empty() {
-                    release_held(producer, &mut held);
-                    playing = true;
-                    epoch = Instant::now();
-                    cycle = 0;
-                    next_index = 0;
-                }
-            }
-            Ok(LooperCommand::Stop) => {
-                playing = false;
-                release_held(producer, &mut held);
-            }
-            Ok(LooperCommand::Clear) => {
-                playing = false;
-                release_held(producer, &mut held);
-                events.clear();
-                length = Duration::ZERO;
-            }
-            Ok(LooperCommand::Ring(new_producer)) => {
-                held.clear();
                 *producer = new_producer;
+            }
+            Ok(PlayerMsg::Slot(index, command)) => {
+                let Some(slot) = slots.get_mut(index) else {
+                    continue;
+                };
+                match command {
+                    LooperCommand::Start { events, length } => {
+                        release_held(producer, &mut slot.held);
+                        slot.events = events;
+                        slot.events.sort_by_key(|e| e.offset);
+                        slot.length = length;
+                        slot.playing = true;
+                        slot.epoch = Some(Instant::now());
+                        slot.cycle = 0;
+                        slot.next_index = 0;
+                    }
+                    LooperCommand::Overdub(mut extra) => {
+                        slot.events.append(&mut extra);
+                        slot.events.sort_by_key(|e| e.offset);
+                        if slot.playing
+                            && let Some(epoch) = slot.epoch
+                        {
+                            let position = Instant::now().saturating_duration_since(epoch);
+                            let in_cycle_ns = position.as_nanos() % slot.length.as_nanos().max(1);
+                            slot.next_index = slot
+                                .events
+                                .iter()
+                                .position(|e| e.offset.as_nanos() > in_cycle_ns)
+                                .unwrap_or(slot.events.len());
+                        }
+                    }
+                    LooperCommand::Restart => {
+                        if !slot.events.is_empty() {
+                            release_held(producer, &mut slot.held);
+                            slot.playing = true;
+                            slot.epoch = Some(Instant::now());
+                            slot.cycle = 0;
+                            slot.next_index = 0;
+                        }
+                    }
+                    LooperCommand::Stop => {
+                        slot.playing = false;
+                        release_held(producer, &mut slot.held);
+                    }
+                    LooperCommand::Clear => {
+                        slot.playing = false;
+                        release_held(producer, &mut slot.held);
+                        slot.events.clear();
+                        slot.length = Duration::ZERO;
+                    }
+                }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                release_held(producer, &mut held);
+                for slot in slots.iter_mut() {
+                    release_held(producer, &mut slot.held);
+                }
                 return;
             }
         }
 
-        if !playing || events.is_empty() {
-            continue;
-        }
         let now = Instant::now();
-        // Fire everything due.
-        loop {
-            if next_index >= events.len() {
-                let wrap_at = epoch + length * (cycle + 1) as u32;
-                if now >= wrap_at {
-                    // Close any notes the loop left hanging (e.g. a
-                    // NoteOn whose NoteOff arrived after the loop was
-                    // closed while recording); otherwise voices stack up
-                    // on every pass.
-                    release_held(producer, &mut held);
-                    cycle += 1;
-                    next_index = 0;
+        for slot in slots.iter_mut() {
+            if !slot.playing || slot.events.is_empty() {
+                continue;
+            }
+            let epoch = *slot.epoch.get_or_insert(now);
+            loop {
+                if slot.next_index >= slot.events.len() {
+                    let wrap_at = epoch + slot.length * (slot.cycle + 1) as u32;
+                    if now >= wrap_at {
+                        // Close notes the loop left hanging so voices
+                        // cannot stack across cycles.
+                        release_held(producer, &mut slot.held);
+                        slot.cycle += 1;
+                        slot.next_index = 0;
+                    } else {
+                        break;
+                    }
+                }
+                let due =
+                    epoch + slot.length * slot.cycle as u32 + slot.events[slot.next_index].offset;
+                if now >= due {
+                    let ev = slot.events[slot.next_index];
+                    push(producer, &ev, &mut slot.held);
+                    slot.next_index += 1;
                 } else {
                     break;
                 }
-            }
-            let due = epoch + length * cycle as u32 + events[next_index].offset;
-            if now >= due {
-                let ev = events[next_index];
-                push(producer, &ev, &mut held);
-                next_index += 1;
-            } else {
-                break;
             }
         }
     }

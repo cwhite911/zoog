@@ -9,13 +9,14 @@ use iced::widget::{
 };
 use iced::{Element, Fill, Length, Subscription, Task, keyboard};
 
+use lab_core::app::PadMode;
 use lab_core::app::{
     CoreCommand, CoreConfig, CoreEvent, CoreHandle, EngineConfig, PresetInfo, start,
 };
-use lab_core::looper::{LooperButton, LooperUiState};
+use lab_core::looper::{LooperButton, LooperUiState, SLOTS};
 use lab_core::mapping::Control;
 
-use macro_panel::{ControlView, MacroPanel};
+use macro_panel::{ControlView, MacroPanel, PadView};
 
 /// Boot parameters, hashed to identify the core subscription.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -140,6 +141,21 @@ fn project_controls(controls: &[lab_core::app::ControlInfo]) -> Vec<ControlView>
         .collect()
 }
 
+/// Loop-slot color for a pad in Loops mode.
+fn slot_color(state: LooperUiState) -> iced::Color {
+    match state {
+        LooperUiState::Empty => theme::PAD_OFF,
+        LooperUiState::Armed => iced::Color {
+            a: 0.55,
+            ..theme::LOOP_REC
+        },
+        LooperUiState::Recording => theme::LOOP_REC,
+        LooperUiState::Overdub => iced::Color::from_rgb(0.92, 0.55, 0.20),
+        LooperUiState::Playing => theme::LOOP_PLAY,
+        LooperUiState::Stopped => theme::LOOP_STOP,
+    }
+}
+
 /// A rounded looper transport button: filled with `accent` while its state
 /// is active, a quiet outline otherwise, brightening on hover.
 fn looper_button_style(
@@ -195,6 +211,8 @@ pub enum Message {
     WindowResized(iced::Size),
     EngineSelected(String),
     Looper(LooperButton),
+    PadClicked(u8),
+    TogglePadMode,
     OpenSettings(bool),
     Rescan,
 }
@@ -237,6 +255,9 @@ struct App {
     stats: Stats,
     looper_state: LooperUiState,
     looper_status: String,
+    looper_slots: [LooperUiState; SLOTS],
+    pad_mode: PadMode,
+    focused_slot: usize,
     last_error: Option<String>,
     page: Page,
 }
@@ -272,7 +293,10 @@ impl App {
                 pads: [false; 8],
                 stats: Stats::default(),
                 looper_state: LooperUiState::Empty,
-                looper_status: "loop: empty".to_string(),
+                looper_status: "loop 1 empty".to_string(),
+                looper_slots: [LooperUiState::Empty; SLOTS],
+                pad_mode: PadMode::Notes,
+                focused_slot: 0,
                 last_error: None,
                 page: Page::Main,
             },
@@ -373,6 +397,14 @@ impl App {
             }
             Message::WindowResized(size) => save_window_size(size),
             Message::Looper(button) => self.send(CoreCommand::Looper(button)),
+            Message::PadClicked(pad) => self.send(CoreCommand::LooperPad(pad)),
+            Message::TogglePadMode => {
+                let mode = match self.pad_mode {
+                    PadMode::Notes => PadMode::Loops,
+                    PadMode::Loops => PadMode::Notes,
+                };
+                self.send(CoreCommand::SetPadMode(mode));
+            }
             Message::EngineSelected(name) => {
                 if let Some(engine) = self.engines.iter().find(|e| e.name == name)
                     && engine.id != self.boot.plugin_match
@@ -463,8 +495,16 @@ impl App {
                 return self.scroll_to_selected();
             }
             CoreEvent::DeviceConnected(connected) => self.device_connected = connected,
-            CoreEvent::Looper { state, status } => {
-                self.looper_state = state;
+            CoreEvent::Looper {
+                pad_mode,
+                focused,
+                slots,
+                status,
+            } => {
+                self.pad_mode = pad_mode;
+                self.focused_slot = focused;
+                self.looper_slots = slots;
+                self.looper_state = slots[focused.min(SLOTS - 1)];
                 self.looper_status = status;
             }
             CoreEvent::ControlsRebound { controls } => {
@@ -599,9 +639,13 @@ impl App {
         .width(Fill);
 
         // Right: macro view.
+        let pad_views: [PadView; 8] = std::array::from_fn(|i| PadView {
+            down: self.pads[i],
+            slot_color: (self.pad_mode == PadMode::Loops).then(|| slot_color(self.looper_slots[i])),
+        });
         let macro_view = iced::widget::canvas(MacroPanel {
             controls: &self.control_views,
-            pads: &self.pads,
+            pads: pad_views,
         })
         .width(Fill)
         .height(Fill);
@@ -716,6 +760,19 @@ impl App {
                 .padding([6, 14])
                 .style(looper_button_style(theme::LOOP_STOP, stop_active))
                 .on_press(Message::Looper(LooperButton::Stop)),
+            button(
+                text(match self.pad_mode {
+                    PadMode::Notes => "Pads: Notes",
+                    PadMode::Loops => "Pads: Loops",
+                })
+                .size(13)
+            )
+            .padding([6, 14])
+            .style(looper_button_style(
+                theme::ACCENT,
+                self.pad_mode == PadMode::Loops
+            ))
+            .on_press(Message::TogglePadMode),
             text(self.looper_status.clone())
                 .size(13)
                 .color(status_color),
