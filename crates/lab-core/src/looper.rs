@@ -59,8 +59,12 @@ pub const SLOTS: usize = 8;
 pub enum PlayerMsg {
     /// A command for one loop slot.
     Slot(usize, LooperCommand),
-    /// Swap in a fresh producer after an audio stream rebuild.
+    /// Swap in a fresh fallback producer after an audio stream rebuild.
     Ring(rtrb::Producer<RtMidi>),
+    /// Route a slot's playback into its own engine ring.
+    SlotRing(usize, rtrb::Producer<RtMidi>),
+    /// Drop a slot's dedicated ring (fall back to the shared one).
+    SlotRingClear(usize),
 }
 
 /// The single-button behavior of a pad in Loops mode, given its slot's
@@ -350,6 +354,7 @@ struct Slot {
 
 fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<PlayerMsg>) {
     let mut slots: Vec<Slot> = (0..SLOTS).map(|_| Slot::default()).collect();
+    let mut slot_rings: Vec<Option<rtrb::Producer<RtMidi>>> = (0..SLOTS).map(|_| None).collect();
 
     fn push(producer: &mut rtrb::Producer<RtMidi>, ev: &LoopEvent, held: &mut Vec<[u8; 2]>) {
         let status = ev.bytes[0] & 0xF0;
@@ -397,13 +402,35 @@ fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<Pl
                 }
                 *producer = new_producer;
             }
+            Ok(PlayerMsg::SlotRing(index, ring)) => {
+                if let Some(entry) = slot_rings.get_mut(index) {
+                    // Notes sounding on the old target would hang there.
+                    if let Some(slot) = slots.get_mut(index) {
+                        let target = entry.as_mut().unwrap_or(producer);
+                        release_held(target, &mut slot.held);
+                    }
+                    *entry = Some(ring);
+                }
+            }
+            Ok(PlayerMsg::SlotRingClear(index)) => {
+                if let Some(entry) = slot_rings.get_mut(index) {
+                    if let (Some(ring), Some(slot)) = (entry.as_mut(), slots.get_mut(index)) {
+                        release_held(ring, &mut slot.held);
+                    }
+                    *entry = None;
+                }
+            }
             Ok(PlayerMsg::Slot(index, command)) => {
                 let Some(slot) = slots.get_mut(index) else {
                     continue;
                 };
+                let target = slot_rings
+                    .get_mut(index)
+                    .and_then(Option::as_mut)
+                    .unwrap_or(producer);
                 match command {
                     LooperCommand::Start { events, length } => {
-                        release_held(producer, &mut slot.held);
+                        release_held(target, &mut slot.held);
                         slot.events = events;
                         slot.events.sort_by_key(|e| e.offset);
                         slot.length = length;
@@ -429,7 +456,7 @@ fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<Pl
                     }
                     LooperCommand::Restart => {
                         if !slot.events.is_empty() {
-                            release_held(producer, &mut slot.held);
+                            release_held(target, &mut slot.held);
                             slot.playing = true;
                             slot.epoch = Some(Instant::now());
                             slot.cycle = 0;
@@ -438,11 +465,11 @@ fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<Pl
                     }
                     LooperCommand::Stop => {
                         slot.playing = false;
-                        release_held(producer, &mut slot.held);
+                        release_held(target, &mut slot.held);
                     }
                     LooperCommand::Clear => {
                         slot.playing = false;
-                        release_held(producer, &mut slot.held);
+                        release_held(target, &mut slot.held);
                         slot.events.clear();
                         slot.length = Duration::ZERO;
                     }
@@ -458,10 +485,14 @@ fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<Pl
         }
 
         let now = Instant::now();
-        for slot in slots.iter_mut() {
+        for (index, slot) in slots.iter_mut().enumerate() {
             if !slot.playing || slot.events.is_empty() {
                 continue;
             }
+            let target = slot_rings
+                .get_mut(index)
+                .and_then(Option::as_mut)
+                .unwrap_or(producer);
             let epoch = *slot.epoch.get_or_insert(now);
             loop {
                 if slot.next_index >= slot.events.len() {
@@ -469,7 +500,7 @@ fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<Pl
                     if now >= wrap_at {
                         // Close notes the loop left hanging so voices
                         // cannot stack across cycles.
-                        release_held(producer, &mut slot.held);
+                        release_held(target, &mut slot.held);
                         slot.cycle += 1;
                         slot.next_index = 0;
                     } else {
@@ -480,7 +511,7 @@ fn playback_thread(producer: &mut rtrb::Producer<RtMidi>, commands: &Receiver<Pl
                     epoch + slot.length * slot.cycle as u32 + slot.events[slot.next_index].offset;
                 if now >= due {
                     let ev = slot.events[slot.next_index];
-                    push(producer, &ev, &mut slot.held);
+                    push(target, &ev, &mut slot.held);
                     slot.next_index += 1;
                 } else {
                     break;

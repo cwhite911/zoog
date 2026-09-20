@@ -16,8 +16,34 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, Sample, SampleFormat, SizedSample, StreamConfig};
 use rtrb::Consumer;
 
+use clack_host::process::StoppedPluginAudioProcessor;
+
 use crate::events::{EventCollector, ParamChange, RtMidi};
 use crate::host::BenchHost;
+
+/// A per-loop-slot plugin engine, built on the host thread and installed
+/// into the running audio callback (multi-timbral loop playback: each slot
+/// keeps the preset it was recorded with).
+pub struct SlotEngine {
+    pub slot: usize,
+    pub processor: StartedPluginAudioProcessor<BenchHost>,
+    pub buffers: PluginBuffers,
+    pub events: EventCollector,
+    pub midi: Consumer<RtMidi>,
+}
+
+/// Everything a successful stream start hands back: the stream itself
+/// (keep it alive), callback stats, the negotiated configuration, and the
+/// slot-engine management handles.
+pub type ActiveStream = (cpal::Stream, Arc<AudioStats>, AudioInfo, SlotChannels);
+
+/// Host-side handles for managing slot engines in the audio callback.
+pub struct SlotChannels {
+    pub install: rtrb::Producer<SlotEngine>,
+    pub remove: rtrb::Producer<usize>,
+    /// Slot processors handed back for main-thread deactivation.
+    pub retired: rtrb::Consumer<(usize, StoppedPluginAudioProcessor<BenchHost>)>,
+}
 
 /// Requested engine configuration. Defaults per PLAN.md Phase 3.
 #[derive(Debug, Clone, Copy)]
@@ -231,23 +257,34 @@ impl PluginBuffers {
         )
     }
 
-    /// Interleaves the main output port into a stereo frame buffer.
-    /// A mono main port is duplicated to both channels.
-    pub fn write_main_to_stereo<S: Sample + FromSample<f32>>(&self, frames: usize, out: &mut [S]) {
+    /// Mixes the main output port into an interleaved stereo f32 buffer,
+    /// either overwriting or accumulating. A mono main port is duplicated
+    /// to both channels.
+    pub fn mix_main(&self, frames: usize, out: &mut [f32], accumulate: bool) {
         let main = &self.output_channels[self.layout_out.main_port];
         match self.layout_out.main_channel_count() {
             1 => {
                 for (frame, &sample) in out.chunks_exact_mut(2).zip(main.iter().take(frames)) {
-                    frame[0] = sample.to_sample();
-                    frame[1] = sample.to_sample();
+                    if accumulate {
+                        frame[0] += sample;
+                        frame[1] += sample;
+                    } else {
+                        frame[0] = sample;
+                        frame[1] = sample;
+                    }
                 }
             }
             _ => {
                 let (left, rest) = main.split_at(self.max_frames);
                 let right = &rest[..self.max_frames];
                 for (i, frame) in out.chunks_exact_mut(2).take(frames).enumerate() {
-                    frame[0] = left[i].to_sample();
-                    frame[1] = right[i].to_sample();
+                    if accumulate {
+                        frame[0] += left[i];
+                        frame[1] += right[i];
+                    } else {
+                        frame[0] = left[i];
+                        frame[1] = right[i];
+                    }
                 }
             }
         }
@@ -299,6 +336,12 @@ pub struct StreamProcessor {
     stats: Arc<AudioStats>,
     sample_rate: u64,
     steady_counter: u64,
+    /// Interleaved stereo mix scratch (main + slot engines).
+    mix: Vec<f32>,
+    slots: Vec<Option<SlotEngine>>,
+    slot_install: Consumer<SlotEngine>,
+    slot_remove: Consumer<usize>,
+    slot_retired: rtrb::Producer<(usize, StoppedPluginAudioProcessor<BenchHost>)>,
 }
 
 impl StreamProcessor {
@@ -307,6 +350,28 @@ impl StreamProcessor {
         let started = Instant::now();
         let frames = data.len() / 2;
         self.buffers.ensure_frames(frames);
+        if self.mix.len() < frames * 2 {
+            self.mix.resize(frames * 2, 0.0);
+        }
+        let mix = &mut self.mix[..frames * 2];
+
+        // Slot engine maintenance: install fresh engines, retire removed
+        // ones back to the host thread for deactivation.
+        while let Ok(engine) = self.slot_install.pop() {
+            let index = engine.slot.min(self.slots.len().saturating_sub(1));
+            if let Some(old) = self.slots[index].replace(engine) {
+                let _ = self
+                    .slot_retired
+                    .push((old.slot, old.processor.stop_processing()));
+            }
+        }
+        while let Ok(index) = self.slot_remove.pop() {
+            if let Some(old) = self.slots.get_mut(index).and_then(Option::take) {
+                let _ = self
+                    .slot_retired
+                    .push((old.slot, old.processor.stop_processing()));
+            }
+        }
 
         let events = self.events.collect(
             &mut self.midi,
@@ -324,15 +389,41 @@ impl StreamProcessor {
             Some(self.steady_counter),
             None,
         ) {
-            Ok(_) => {
-                self.buffers.write_main_to_stereo(frames, data);
-                let peak = self.buffers.main_output_peak(frames);
-                self.stats
-                    .peak_bits
-                    .fetch_max(peak.to_bits(), Ordering::Relaxed);
-            }
-            Err(_) => data.fill(S::EQUILIBRIUM),
+            Ok(_) => self.buffers.mix_main(frames, mix, false),
+            Err(_) => mix.fill(0.0),
         }
+
+        // Slot engines: each replays its loop with its own preset.
+        for slot in self.slots.iter_mut().flatten() {
+            slot.buffers.ensure_frames(frames);
+            let events = slot
+                .events
+                .collect(&mut slot.midi, None, None, frames as u64);
+            let (ins, mut outs) = slot.buffers.prepare(frames);
+            if slot
+                .processor
+                .process(
+                    &ins,
+                    &mut outs,
+                    &events,
+                    &mut OutputEvents::void(),
+                    Some(self.steady_counter),
+                    None,
+                )
+                .is_ok()
+            {
+                slot.buffers.mix_main(frames, mix, true);
+            }
+        }
+
+        let mut peak = 0.0f32;
+        for (out, &m) in data.iter_mut().zip(mix.iter()) {
+            peak = peak.max(m.abs());
+            *out = m.to_sample();
+        }
+        self.stats
+            .peak_bits
+            .fetch_max(peak.to_bits(), Ordering::Relaxed);
         self.steady_counter += frames as u64;
 
         let elapsed_ns = started.elapsed().as_nanos() as u64;
@@ -394,7 +485,7 @@ pub fn activate_to_stream(
     looper: Option<Consumer<RtMidi>>,
     params: Option<Consumer<ParamChange>>,
     config: EngineConfig,
-) -> Result<(cpal::Stream, Arc<AudioStats>, AudioInfo), Box<dyn Error>> {
+) -> Result<ActiveStream, Box<dyn Error>> {
     let layout_in = query_port_layout(instance, true);
     let layout_out = query_port_layout(instance, false);
     let main_channels = layout_out.main_channel_count();
@@ -442,9 +533,14 @@ pub fn activate_to_stream(
         .start_processing()?;
 
     let stats = Arc::new(AudioStats::default());
+    let (install_tx, install_rx) = rtrb::RingBuffer::<SlotEngine>::new(16);
+    let (remove_tx, remove_rx) = rtrb::RingBuffer::<usize>::new(16);
+    let (retired_tx, retired_rx) =
+        rtrb::RingBuffer::<(usize, StoppedPluginAudioProcessor<BenchHost>)>::new(16);
+    let max_frames = buffer_frames.max(1024) as usize;
     let stream_processor = StreamProcessor {
         processor,
-        buffers: PluginBuffers::new(layout_in, layout_out, buffer_frames.max(1024) as usize),
+        buffers: PluginBuffers::new(layout_in, layout_out, max_frames),
         events: EventCollector::new(sample_rate as u64, note_port),
         midi,
         looper,
@@ -452,6 +548,11 @@ pub fn activate_to_stream(
         stats: stats.clone(),
         sample_rate: sample_rate as u64,
         steady_counter: 0,
+        mix: vec![0.0; max_frames * 2],
+        slots: (0..8).map(|_| None).collect(),
+        slot_install: install_rx,
+        slot_remove: remove_rx,
+        slot_retired: retired_tx,
     };
 
     let stream = build_stream(&device, stream_config, sample_format, stream_processor)?;
@@ -459,7 +560,16 @@ pub fn activate_to_stream(
         .play()
         .map_err(|e| AudioError::Backend(e.to_string()))?;
 
-    Ok((stream, stats, info))
+    Ok((
+        stream,
+        stats,
+        info,
+        SlotChannels {
+            install: install_tx,
+            remove: remove_tx,
+            retired: retired_rx,
+        },
+    ))
 }
 
 /// Picks a supported stereo output configuration closest to the request.

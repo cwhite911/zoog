@@ -28,7 +28,9 @@ use lab_midi::rate::Coalescer;
 use lab_midi::sysex::{ColorTarget, display_text, init, pad_color};
 
 use crate::browser::{BrowseItem, Browser};
-use crate::looper::{LooperButton, LooperLogic, LooperUiState, PlayerMsg, SLOTS, pad_action};
+use crate::looper::{
+    LooperButton, LooperCommand, LooperLogic, LooperUiState, PlayerMsg, SLOTS, pad_action,
+};
 use crate::mapping::{Control, MacroControls, MappingFile};
 
 pub const CLIENT_NAME: &str = "benchlab";
@@ -282,6 +284,11 @@ enum FromControl {
         path: Option<PathBuf>,
         load_key: Option<String>,
     },
+    /// A loop slot closed a take: give it its own engine instance loaded
+    /// with the preset active right now.
+    SlotReady { slot: usize },
+    /// A loop slot was cleared: retire its engine instance.
+    SlotCleared { slot: usize },
 }
 
 /// Messages from the host thread to the control thread.
@@ -445,6 +452,15 @@ fn host_thread(
     let mut audio_info = None;
     let mut _stream = None;
     let mut audio_retry_at: Option<Instant> = None;
+    let mut slot_channels: Option<lab_engine::audio::SlotChannels> = None;
+    let mut active_cfg: Option<(f64, u32)> = None;
+    let mut current_preset: Option<(Option<PathBuf>, Option<String>)> = None;
+    let mut slot_instances: Vec<
+        Option<(
+            lab_engine::clack_host::prelude::PluginInstance<lab_engine::host::BenchHost>,
+            Receiver<HostThreadMessage>,
+        )>,
+    > = (0..SLOTS).map(|_| None).collect();
     if let Some(instance) = instance.as_mut() {
         match activate_to_stream(
             instance,
@@ -453,10 +469,12 @@ fn host_thread(
             Some(param_consumer),
             config.engine,
         ) {
-            Ok((stream, audio_stats, info)) => {
+            Ok((stream, audio_stats, info, channels)) => {
+                active_cfg = Some((info.sample_rate as f64, info.buffer_frames.max(1024)));
                 _stream = Some(stream);
                 stats = Some(audio_stats);
                 audio_info = Some(info);
+                slot_channels = Some(channels);
             }
             Err(e) => {
                 let _ = events.send(CoreEvent::Error(format!("audio failed: {e}")));
@@ -488,6 +506,7 @@ fn host_thread(
         && let Some(id) = SessionState::load().last_preset
         && let Ok(Some(row)) = library.get(id)
     {
+        current_preset = Some((row.path.clone(), row.load_key.clone()));
         do_load_preset(
             instance.as_mut(),
             &library,
@@ -524,24 +543,73 @@ fn host_thread(
             timers.tick(timer_ext, &instance.plugin_handle());
         }
 
-        // Preset loads requested by the control thread.
+        // Requests from the control thread.
         while let Ok(msg) = from_control_rx.try_recv() {
-            let FromControl::LoadPreset {
-                id,
-                name,
-                path,
-                load_key,
-            } = msg;
-            do_load_preset(
-                instance.as_mut(),
-                &library,
-                events,
-                &to_control_tx,
-                id,
-                name,
-                path,
-                load_key,
-            );
+            match msg {
+                FromControl::LoadPreset {
+                    id,
+                    name,
+                    path,
+                    load_key,
+                } => {
+                    current_preset = Some((path.clone(), load_key.clone()));
+                    do_load_preset(
+                        instance.as_mut(),
+                        &library,
+                        events,
+                        &to_control_tx,
+                        id,
+                        name,
+                        path,
+                        load_key,
+                    );
+                }
+                FromControl::SlotReady { slot } => {
+                    if let (Some(found), Some(channels), Some(cfg)) =
+                        (&plugin, slot_channels.as_mut(), active_cfg)
+                    {
+                        match build_slot_engine(found, &current_preset, cfg, slot) {
+                            Ok((inst, rx, engine, producer)) => {
+                                if channels.install.push(engine).is_ok() {
+                                    let _ = looper_tx.send(PlayerMsg::SlotRing(slot, producer));
+                                    slot_instances[slot] = Some((inst, rx));
+                                } else {
+                                    let _ = events.send(CoreEvent::Error(
+                                        "slot engine install queue full".to_string(),
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                let _ = events.send(CoreEvent::Error(format!(
+                                    "loop slot engine failed: {e}; slot plays the live preset"
+                                )));
+                            }
+                        }
+                    }
+                }
+                FromControl::SlotCleared { slot } => {
+                    if let Some(channels) = slot_channels.as_mut() {
+                        let _ = channels.remove.push(slot);
+                    }
+                    let _ = looper_tx.send(PlayerMsg::SlotRingClear(slot));
+                }
+            }
+        }
+
+        // Retired slot processors come back for main-thread deactivation.
+        if let Some(channels) = slot_channels.as_mut() {
+            while let Ok((slot, stopped)) = channels.retired.pop() {
+                if let Some((mut inst, _rx)) = slot_instances.get_mut(slot).and_then(Option::take) {
+                    inst.deactivate(stopped);
+                }
+            }
+        }
+
+        // Slot instances get their main-thread callbacks too.
+        for entry in slot_instances.iter_mut().flatten() {
+            while let Ok(HostThreadMessage::RunOnMainThread) = entry.1.try_recv() {
+                entry.0.call_on_main_thread_callback();
+            }
         }
 
         // Frontend commands.
@@ -550,6 +618,7 @@ fn host_thread(
                 Ok(CoreCommand::Shutdown) => return Ok(()),
                 Ok(CoreCommand::LoadPreset(id)) => {
                     if let Ok(Some(row)) = library.get(id) {
+                        current_preset = Some((row.path.clone(), row.load_key.clone()));
                         do_load_preset(
                             instance.as_mut(),
                             &library,
@@ -681,6 +750,18 @@ fn host_thread(
                 let (param_producer, param_consumer) = rtrb::RingBuffer::<ParamChange>::new(256);
                 let (looper_producer, looper_consumer) = rtrb::RingBuffer::<RtMidi>::new(512);
                 let _ = looper_tx.send(PlayerMsg::Ring(looper_producer));
+                // Slot engines died with the old stream: deactivate their
+                // instances; loops fall back to the live preset until
+                // re-recorded.
+                for slot in 0..SLOTS {
+                    if let Some((mut inst, _rx)) =
+                        slot_instances.get_mut(slot).and_then(Option::take)
+                    {
+                        let _ = inst.try_deactivate();
+                        let _ = looper_tx.send(PlayerMsg::SlotRingClear(slot));
+                    }
+                }
+                slot_channels = None;
                 match activate_to_stream(
                     instance,
                     midi_consumer,
@@ -688,9 +769,10 @@ fn host_thread(
                     Some(param_consumer),
                     config.engine,
                 ) {
-                    Ok((stream, audio_stats, _info)) => {
+                    Ok((stream, audio_stats, _info, channels)) => {
                         _stream = Some(stream);
                         stats = Some(audio_stats);
+                        slot_channels = Some(channels);
                         let _ = to_control_tx.send(ToControl::Rings {
                             midi: midi_producer,
                             params: param_producer,
@@ -737,6 +819,61 @@ fn make_instance(
         &host_info(),
     )?;
     Ok((instance, host_rx))
+}
+
+/// Builds a dedicated engine instance for a loop slot, loaded with the
+/// preset that was active when the loop was recorded.
+#[allow(clippy::type_complexity)]
+fn build_slot_engine(
+    found: &lab_engine::discovery::FoundPlugin,
+    preset: &Option<(Option<PathBuf>, Option<String>)>,
+    cfg: (f64, u32),
+    slot: usize,
+) -> Result<
+    (
+        lab_engine::clack_host::prelude::PluginInstance<lab_engine::host::BenchHost>,
+        Receiver<HostThreadMessage>,
+        lab_engine::audio::SlotEngine,
+        rtrb::Producer<RtMidi>,
+    ),
+    AnyError,
+> {
+    use lab_engine::audio::{PluginBuffers, SlotEngine, query_port_layout};
+    use lab_engine::clack_host::prelude::PluginAudioConfiguration;
+    use lab_engine::events::{EventCollector, NotePortConfig, find_main_note_port};
+
+    let (mut instance, host_rx) = make_instance(found)?;
+    if let Some((path, load_key)) = preset {
+        // Best effort: a failed preset load leaves the slot on the
+        // engine's default sound rather than failing the slot.
+        let _ =
+            lab_engine::presets::load_preset(&mut instance, path.as_deref(), load_key.as_deref());
+    }
+    let layout_in = query_port_layout(&mut instance, true);
+    let layout_out = query_port_layout(&mut instance, false);
+    let note_port = find_main_note_port(&mut instance).unwrap_or(NotePortConfig {
+        port_index: 0,
+        prefers_midi: true,
+    });
+    let processor = instance
+        .activate(
+            |_, _| (),
+            PluginAudioConfiguration {
+                sample_rate: cfg.0,
+                min_frames_count: 1,
+                max_frames_count: cfg.1,
+            },
+        )?
+        .start_processing()?;
+    let (producer, consumer) = rtrb::RingBuffer::<RtMidi>::new(256);
+    let engine = SlotEngine {
+        slot,
+        processor,
+        buffers: PluginBuffers::new(layout_in, layout_out, cfg.1 as usize),
+        events: EventCollector::new(cfg.0 as u64, note_port),
+        midi: consumer,
+    };
+    Ok((instance, host_rx, engine, producer))
 }
 
 fn bind_mapping(
@@ -1047,7 +1184,15 @@ impl ControlThread {
             self.ensure_exclusive_capture(slot, now);
         }
         if let Some(command) = output.command {
+            let started = matches!(command, LooperCommand::Start { .. });
+            let cleared = matches!(command, LooperCommand::Clear);
             let _ = self.looper_tx.send(PlayerMsg::Slot(slot, command));
+            if started {
+                let _ = self.to_host.send(FromControl::SlotReady { slot });
+            }
+            if cleared {
+                let _ = self.to_host.send(FromControl::SlotCleared { slot });
+            }
         }
         if output.status.is_some() {
             self.emit_looper(self.slot_status());
