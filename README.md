@@ -55,6 +55,24 @@ Reference: [control map](docs/minilab3-control-map.md) ·
 [SysEx messages](docs/minilab3-sysex.md) ·
 [capture procedure](docs/capture-script.md)
 
+## Install
+
+### apt (Debian, Ubuntu, Pop!_OS)
+
+```bash
+curl -fsSL https://cwhite911.github.io/zoog/apt/zoog-archive-keyring.asc \
+  | sudo gpg --dearmor -o /usr/share/keyrings/zoog-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/zoog-archive-keyring.gpg] https://cwhite911.github.io/zoog/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/zoog.list
+sudo apt update && sudo apt install zoog
+```
+
+Updates then arrive with the rest of your system updates. You also need a CLAP
+instrument to play, for example `sudo apt install surge-xt`.
+
+Or grab the `.deb` straight from the
+[latest release](https://github.com/cwhite911/zoog/releases/latest).
+
 ## Building
 
 ```bash

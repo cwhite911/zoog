@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- SPDX-FileCopyrightText: 2026 Corey T. White -->
+<component type="desktop-application">
+  <id>io.github.cwhite911.zoog</id>
+  <launchable type="desktop-id">zoog.desktop</launchable>
+
+  <name>Zoog</name>
+  <summary>Sound browser, looper, and CLAP host for the Arturia MiniLab 3</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+
+  <developer id="io.github.cwhite911">
+    <name>Corey T. White</name>
+  </developer>
+  <!-- Kept for AppStream &lt; 1.0 parsers, e.g. Ubuntu 22.04 software centres. -->
+  <developer_name>Corey T. White</developer_name>
+
+  <description>
+    <p>
+      Zoog gives the Arturia MiniLab 3 a native Linux workflow: browse a
+      searchable preset library from the hardware or the screen, play CLAP
+      instruments with low latency, and shape the sound with the eight encoders
+      and four faders while the device display follows along.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Preset browsing from the controller, with display feedback</li>
+      <li>Per-engine macro mappings with soft takeover, so values never jump</li>
+      <li>A MIDI phrase looper on the transport pads</li>
+      <li>Eight loop slots on the pads, each keeping the preset it was recorded with</li>
+      <li>Automatic recovery from controller hotplug and audio stream loss</li>
+    </ul>
+    <p>
+      Surge XT and Odin2 work out of the box; other CLAP instruments are
+      discovered automatically. Zoog is not affiliated with or endorsed by
+      Arturia.
+    </p>
+  </description>
+
+  <categories>
+    <category>Audio</category>
+    <category>AudioVideo</category>
+    <category>Music</category>
+  </categories>
+
+  <keywords>
+    <keyword>MIDI</keyword>
+    <keyword>CLAP</keyword>
+    <keyword>synthesizer</keyword>
+    <keyword>looper</keyword>
+    <keyword>preset</keyword>
+  </keywords>
+
+  <url type="homepage">https://cwhite911.github.io/zoog/</url>
+  <url type="bugtracker">https://github.com/cwhite911/zoog/issues</url>
+  <url type="help">https://cwhite911.github.io/zoog/</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Preset library and the macro panel mirroring the hardware</caption>
+      <image>https://cwhite911.github.io/zoog/img/main.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Loop-slot mode, with each pad an independent loop</caption>
+      <image>https://cwhite911.github.io/zoog/img/loops.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Settings, including the engine picker</caption>
+      <image>https://cwhite911.github.io/zoog/img/settings.png</image>
+    </screenshot>
+  </screenshots>
+
+  <provides>
+    <binary>zoog</binary>
+    <binary>labctl</binary>
+  </provides>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-09-20">
+      <url type="details">https://github.com/cwhite911/zoog/releases/tag/v0.1.0</url>
+      <description>
+        <p>First release: preset browsing, macro control, the phrase looper,
+           and eight loop slots that each keep their own preset.</p>
+      </description>
+    </release>
+  </releases>
+</component>

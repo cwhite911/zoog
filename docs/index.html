@@ -63,10 +63,26 @@
 </div>
 
 <h2 id="install">Install</h2>
-<h3>Debian / Ubuntu / Pop!_OS package</h3>
+<h3>From the apt repository (recommended)</h3>
+<p>Debian, Ubuntu, and derivatives such as Pop!_OS. Updates then arrive with the
+   rest of your system updates.</p>
+<pre><code>curl -fsSL https://cwhite911.github.io/zoog/apt/zoog-archive-keyring.asc \
+  | sudo gpg --dearmor -o /usr/share/keyrings/zoog-archive-keyring.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/zoog-archive-keyring.gpg] \
+https://cwhite911.github.io/zoog/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/zoog.list
+
+sudo apt update &amp;&amp; sudo apt install zoog</code></pre>
+<p>The archive is signed with the Zoog archive signing key, fingerprint
+   <code>B590 7E00 8959 57F0 04DB&nbsp;&nbsp;2DE0 31D8 1859 02A1 4DBE</code>.</p>
+
+<h3>Single package</h3>
+<p>Download the <code>.deb</code> from the
+   <a href="https://github.com/cwhite911/zoog/releases/latest">latest release</a>:</p>
 <pre><code>sudo apt install ./zoog_0.1.0-1_amd64.deb</code></pre>
-<p>This installs the <code>zoog</code> application, the <code>labctl</code> debug
-   CLI, the desktop entry, and the bundled engine mappings.</p>
+<p>Either way you get the <code>zoog</code> application, the <code>labctl</code>
+   debug CLI, the desktop entry, and the bundled engine mappings.</p>
 
 <h3>From source</h3>
 <pre><code>git clone https://github.com/cwhite911/zoog.git

@@ -1,0 +1,21 @@
+Package: zoog
+Version: 0.1.0-1
+Architecture: amd64
+Maintainer: Corey T. White
+Installed-Size: 26545
+Depends: libasound2 (>= 1.1.0), libc6 (>= 2.34), libc6 (>= 2.35), libegl1, libwayland-client0, libwayland-egl1, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxkbcommon-x11-0, libxkbcommon0
+Recommends: libvulkan1, mesa-vulkan-drivers
+Suggests: surge-xt
+Filename: pool/main/z/zoog/zoog_0.1.0-1_amd64.deb
+Size: 7742308
+MD5sum: be75d13ec554129d502aba4ff027004a
+SHA1: 44876281d40e45ea6b4ffde18108afdb7e4d420c
+SHA256: c250705fc687ab24488ec851a360fddd2c7d8d41d67d9ab610cfe220b312456e
+Section: sound
+Priority: optional
+Description: Sound browser, looper, and CLAP host for the Arturia MiniLab 3
+ Native sound browser and host for the Arturia MiniLab 3. Browse a tagged preset
+ library from the GUI or the hardware, play CLAP instruments (Surge XT first)
+ with low latency, and control macros from the encoders and faders with display
+ feedback. Not affiliated with or endorsed by Arturia.
+

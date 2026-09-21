@@ -26,13 +26,19 @@ Native sound browser and host for the Arturia MiniLab 3. Browse a tagged \
 preset library from the GUI or the hardware, play CLAP instruments (Surge \
 XT first) with low latency, and control macros from the encoders and \
 faders with display feedback. Not affiliated with or endorsed by Arturia."""
-depends = "$auto"
+# $auto only sees libraries linked at load time; the windowing and
+# graphics stack is dlopened at runtime, so it is listed explicitly.
+depends = "$auto, libegl1, libwayland-client0, libwayland-egl1, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxkbcommon0, libxkbcommon-x11-0"
+# Vulkan is preferred; without it iced falls back to software rendering.
+recommends = "libvulkan1, mesa-vulkan-drivers"
+suggests = "surge-xt"
 section = "sound"
 priority = "optional"
 assets = [
     ["target/release/zoog", "usr/bin/", "755"],
     ["target/release/labctl", "usr/bin/", "755"],
     ["../../packaging/zoog.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/io.github.cwhite911.zoog.metainfo.xml", "usr/share/metainfo/", "644"],
     ["../../packaging/zoog.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["assets/zoog-256.png", "usr/share/icons/hicolor/256x256/apps/zoog.png", "644"],
     ["../../packaging/zoog-128.png", "usr/share/icons/hicolor/128x128/apps/zoog.png", "644"],
