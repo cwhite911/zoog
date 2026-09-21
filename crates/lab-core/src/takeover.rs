@@ -52,10 +52,7 @@ impl SoftTakeover {
             return Some(position);
         }
 
-        let last_pos = match last {
-            Some(last) => last as f64 / 127.0,
-            None => return None,
-        };
+        let last_pos = last? as f64 / 127.0;
 
         // Sweeping across the value latches too.
         if (last_pos < target && target <= position) || (position <= target && target < last_pos) {
