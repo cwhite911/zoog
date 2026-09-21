@@ -1,1 +1,6 @@
 /target
+
+# Local working notes and session state, not part of the project
+/docs/DECISIONS.md
+/.remember/
+/.claude/
