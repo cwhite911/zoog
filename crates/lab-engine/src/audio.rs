@@ -264,7 +264,8 @@ impl PluginBuffers {
         let main = &self.output_channels[self.layout_out.main_port];
         match self.layout_out.main_channel_count() {
             1 => {
-                for (frame, &sample) in out.chunks_exact_mut(2).zip(main.iter().take(frames)) {
+                let (pairs, _) = out.as_chunks_mut::<2>();
+                for (frame, &sample) in pairs.iter_mut().zip(main.iter().take(frames)) {
                     if accumulate {
                         frame[0] += sample;
                         frame[1] += sample;
@@ -277,7 +278,8 @@ impl PluginBuffers {
             _ => {
                 let (left, rest) = main.split_at(self.max_frames);
                 let right = &rest[..self.max_frames];
-                for (i, frame) in out.chunks_exact_mut(2).take(frames).enumerate() {
+                let (pairs, _) = out.as_chunks_mut::<2>();
+                for (i, frame) in pairs.iter_mut().take(frames).enumerate() {
                     if accumulate {
                         frame[0] += left[i];
                         frame[1] += right[i];
