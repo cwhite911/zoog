@@ -2016,7 +2016,7 @@ dependencies = [
 
 [[package]]
 name = "lab-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "directories",
  "lab-engine",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "lab-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clack-extensions",
  "clack-finder",
@@ -2041,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "lab-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "iced",
  "lab-core",
@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "lab-library"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "directories",
  "rusqlite",
@@ -2057,14 +2057,14 @@ dependencies = [
 
 [[package]]
 name = "lab-midi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "midir",
 ]
 
 [[package]]
 name = "labctl"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lab-core",
  "lab-engine",

@@ -80,6 +80,14 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.1.1" date="2026-09-21">
+      <url type="details">https://github.com/cwhite911/zoog/releases/tag/v0.1.1</url>
+      <description>
+        <p>Packaging fix: declares the graphics and windowing libraries that are
+           loaded at runtime, so the package works on a clean system. Adds
+           AppStream metadata and an apt repository.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-09-20">
       <url type="details">https://github.com/cwhite911/zoog/releases/tag/v0.1.0</url>
       <description>
