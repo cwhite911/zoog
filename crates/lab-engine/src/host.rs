@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! The zoog CLAP host implementation: handler types, extension
 //! declarations, and the plugin-registered timer bookkeeping.
 //!

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! MiniLab 3 device discovery, event decoding, SysEx encoding, and the
 //! [`Device`](device::Device) trait with a mock implementation.
 //!

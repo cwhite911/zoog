@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Debug and development CLI: port listing and MIDI monitoring with
 //! capture files, device display and pad SysEx, plugin and parameter
 //! inspection, the preset library, and a headless play mode.

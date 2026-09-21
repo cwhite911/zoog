@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! The [`Device`] trait: raw MIDI in and out for one controller, with a
 //! midir-backed implementation and a capture-replaying mock so everything
 //! runs without hardware.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Audio output: plugin activation, buffer plumbing, and the cpal stream.
 //!
 //! Adapted from the clack cpal host example's audio/buffers/config modules,

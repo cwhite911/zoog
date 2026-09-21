@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Per-engine macro mapping files (`mappings/<engine>.toml`) and the
 //! runtime binding of hardware controls to plugin parameters.
 //!

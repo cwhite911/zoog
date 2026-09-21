@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! The macro view: a canvas mirroring the hardware (8 knobs, 4 faders,
 //! 8 pads). Bidirectional: hardware moves animate it (via app state),
 //! dragging knobs and faders publishes control changes.

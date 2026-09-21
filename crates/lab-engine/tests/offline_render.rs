@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Offline render test: load Surge XT, push a note-on,
 //! process blocks with no audio device or hardware, and assert the output is
 //! sound-shaped: audible after the attack, decaying after note-off.

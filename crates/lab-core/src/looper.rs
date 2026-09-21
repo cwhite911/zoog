@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! MIDI phrase looper, driven by the DAW-mode transport pads.
 //!
 //! Two parts:

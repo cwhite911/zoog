@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Preset index: SQLite-backed library with categories, favorites, search,
 //! and rescans. Deliberately independent of the CLAP stack; callers convert
 //! discovery results into [`ImportPreset`].

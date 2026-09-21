@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! The zoog application core: owns the plugin host thread, the device
 //! control thread, the audio stream, and the preset library, and exposes
 //! them through command/event channels.

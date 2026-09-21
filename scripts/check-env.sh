@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 Corey T. White
 # Report whether this machine can build and run Zoog.
 # Exit 0 if all required checks pass; 1 otherwise. Optional checks never fail
 # the script.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Regression test: sending `ParamValueEvent`s during processing must not
 //! crash the plugin (crash observed on hardware with Odin2 when moving an
 //! encoder). Runs against every installed engine with a zoog mapping;

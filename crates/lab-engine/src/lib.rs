@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! CLAP hosting (via clack) and audio output (via cpal) with real-time-safe
 //! queues between the MIDI, control, and audio threads.
 //!

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Binds every mapping file in `mappings/` against its real plugin,
 //! verifying the recorded param ids still resolve. Each mapping is skipped
 //! (with a message) when its plugin is not installed.

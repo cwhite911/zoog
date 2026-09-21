@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Replays the real hardware captures through `MockDevice` and the
 //! corresponding control maps. Each test skips when its capture file is not
 //! present (e.g. a fresh clone before any hardware session).

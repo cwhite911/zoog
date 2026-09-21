@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! SysEx encoders for MiniLab 3 feedback (display text, pad colors, init).
 //!
 //! Every byte layout here is transcribed from community documentation; see

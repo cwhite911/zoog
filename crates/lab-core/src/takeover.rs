@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Soft takeover (value-scaling pickup) for absolute hardware controls.
 //!
 //! The MiniLab 3 encoders and faders send absolute 0..=127 in both captured

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Shared plugin-instance plumbing for labctl subcommands.
 
 use std::error::Error;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Preset discovery (CLAP preset discovery factory) and preset loading
 //! (`clap.preset-load`). Surge XT exposes both, which is why this path
 //! is preferred over host-side `clap.state` snapshots.

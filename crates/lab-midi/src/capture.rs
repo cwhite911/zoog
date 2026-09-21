@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Plain-text capture format for MIDI sessions.
 //!
 //! One message per line: `<timestamp_us> <hex bytes>`, e.g. `123456 90 3C 64`.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Parameter enumeration via the `clap.params` extension (main-thread side).
 
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};

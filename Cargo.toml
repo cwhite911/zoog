@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 Corey T. White
+
 [workspace]
 resolver = "3"
 members = [
@@ -12,6 +15,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+authors = ["Corey T. White"]
 license = "GPL-3.0-only"
 repository = "https://github.com/cwhite911/zoog"
 

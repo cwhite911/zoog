@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Design tokens: every color the GUI uses, in one place.
 //! Dark theme first; the base widget styling comes from `iced::Theme::Dark`,
 //! these tokens cover the custom canvas drawing and accents.

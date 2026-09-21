@@ -1,8 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 Corey T. White
+
 [package]
 name = "lab-core"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
 license.workspace = true
+description = "Zoog application core: engine orchestration, macro mapping, phrase looper"
 
 [dependencies]
 directories = "6.0.0"

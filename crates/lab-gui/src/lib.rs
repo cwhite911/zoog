@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! iced GUI. Depends only on lab-core; runs fully against the mock device
 //! and stub engine, so it is usable with no hardware and no plugin.
 

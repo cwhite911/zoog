@@ -1,8 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 Corey T. White
+
 [package]
 name = "lab-midi"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
 license.workspace = true
+description = "MiniLab 3 device discovery, MIDI event decoding, and SysEx encoding"
 
 [dependencies]
 midir = "0.11.0"

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! CLAP plugin discovery: scan the standard search paths (including
 //! `$CLAP_PATH`, handled by clack-finder) and load plugin entries.
 

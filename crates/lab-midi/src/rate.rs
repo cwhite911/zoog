@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Coalescing rate limiter for device feedback.
 //!
 //! Knob sweeps produce hundreds of display updates per second; the device

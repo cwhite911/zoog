@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: 2026 Corey T. White
 # Macro mapping for Odin2 (com.thewavewarden.odin2).
 #
 # Param ids observed from the installed plugin (Odin2 2.4.1) via

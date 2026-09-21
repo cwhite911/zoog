@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! Preset browsing state: an ordered list with a cursor and a category
 //! filter, driven by the main encoder (turn scrolls, Shift+turn cycles the
 //! category, click loads). Shared by the hardware browse path and, later,

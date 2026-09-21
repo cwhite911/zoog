@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: 2026 Corey T. White
+
 //! `labctl presets`: scan, list, search, load, favorite.
 
 use std::error::Error;
