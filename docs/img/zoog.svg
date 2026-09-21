@@ -1,0 +1,67 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- SPDX-FileCopyrightText: 2026 Corey T. White -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Zoog: an upside-down mountain with caves running through it.
+       The eight glowing cave lights are the eight pads/encoders. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232839"/>
+      <stop offset="1" stop-color="#0d0f17"/>
+    </linearGradient>
+    <linearGradient id="rock" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#556282"/>
+      <stop offset="1" stop-color="#2b3147"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#66b7ea" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#66b7ea" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="248" height="248" rx="52" fill="url(#bg)"/>
+  <rect x="4" y="4" width="248" height="248" rx="52" fill="none"
+        stroke="#3a4258" stroke-width="3"/>
+
+  <!-- a faint upside-down sky glow under the summit-tip -->
+  <ellipse cx="128" cy="226" rx="70" ry="18" fill="url(#sky)"/>
+
+  <!-- the inverted mountain -->
+  <path d="M32 58 L224 58 L128 226 Z" fill="url(#rock)"/>
+  <!-- lighter facet for depth -->
+  <path d="M32 58 L128 58 L128 226 Z" fill="#ffffff" opacity="0.06"/>
+  <!-- ground line the mountain hangs from -->
+  <rect x="22" y="50" width="212" height="9" rx="4.5" fill="#3d465e"/>
+
+  <!-- caves: a winding tunnel connecting the chambers -->
+  <path d="M60 86
+           C 88 96, 92 112, 118 116
+           S 164 104, 176 116
+           C 186 126, 168 140, 148 148
+           S 116 158, 112 166"
+        fill="none" stroke="#0c0e15" stroke-width="12"
+        stroke-linecap="round" opacity="0.92"/>
+
+  <!-- cave chambers -->
+  <ellipse cx="60"  cy="86"  rx="13" ry="11" fill="#0c0e15"/>
+  <ellipse cx="118" cy="116" rx="15" ry="12" fill="#0c0e15"/>
+  <ellipse cx="176" cy="116" rx="12" ry="10" fill="#0c0e15"/>
+  <ellipse cx="148" cy="148" rx="11" ry="9"  fill="#0c0e15"/>
+  <ellipse cx="112" cy="166" rx="12" ry="10" fill="#0c0e15"/>
+
+  <!-- cave lights: 8 of them, like the 8 pads -->
+  <circle cx="54"  cy="84"  r="3.4" fill="#6cc0f0"/>
+  <circle cx="66"  cy="90"  r="2.6" fill="#f2924c"/>
+  <circle cx="112" cy="113" r="3.4" fill="#f2924c"/>
+  <circle cx="124" cy="120" r="2.8" fill="#6cc0f0"/>
+  <circle cx="176" cy="113" r="3.2" fill="#6cc0f0"/>
+  <circle cx="146" cy="146" r="2.8" fill="#f2924c"/>
+  <circle cx="107" cy="164" r="3.0" fill="#6cc0f0"/>
+  <circle cx="117" cy="169" r="2.4" fill="#f2924c"/>
+
+  <!-- snow cap on the inverted summit -->
+  <path d="M96.5 171
+           L104 159 L111 172 L119 158 L128 173 L137 158 L145 172 L152 159 L159.5 171
+           L128 226 Z"
+        fill="#e9eef7"/>
+  <path d="M108 192 L128 226 L148 192 L128 199 Z" fill="#c9d4e6"/>
+</svg>

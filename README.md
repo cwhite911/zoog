@@ -1,46 +1,90 @@
+<div align="center">
+
+<img src="packaging/zoog-128.png" width="112" alt="Zoog logo">
+
 # Zoog
 
-A native Linux sound browser, macro controller, and MIDI phrase looper for
-the Arturia MiniLab 3, written in Rust with an iced GUI and hosting CLAP
-instruments (Surge XT and Odin2 out of the box).
+**A native Linux sound browser, macro controller, and MIDI phrase looper
+for the Arturia MiniLab 3.**
 
-- Browse a tagged, searchable preset library from the GUI or entirely from
-  the hardware (main encoder scrolls, Shift+turn changes category, click
-  loads, with display feedback).
-- The 8 encoders and 4 faders drive per-engine macro mappings with
-  value-scaling soft takeover and live macro names on the device display.
-- The Shift-row transport pads are a phrase looper; in Loops mode the 8
-  pads become independent loop slots, each keeping the preset it was
-  recorded with (per-slot engine instances, mixed live).
-- Hotplug-safe: controller and audio stream recover automatically.
+[![CI](https://github.com/cwhite911/zoog/actions/workflows/ci.yml/badge.svg)](https://github.com/cwhite911/zoog/actions/workflows/ci.yml)
+[![Manual](https://img.shields.io/badge/manual-cwhite911.github.io%2Fzoog-5cade3)](https://cwhite911.github.io/zoog/)
+[![Release](https://img.shields.io/github/v/release/cwhite911/zoog?include_prereleases&sort=semver&label=release)](https://github.com/cwhite911/zoog/releases)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](#building)
 
-**Not affiliated with or endorsed by Arturia.** Device communication is
-based on community-documented MIDI and SysEx behavior; see
-docs/minilab3-control-map.md and docs/minilab3-sysex.md.
+</div>
+
+Zoog hosts CLAP instruments and gives the MiniLab 3 the workflow its bundled
+software offers elsewhere: browse a searchable preset library from the hardware
+or the screen, play with low latency, and shape the sound with the eight
+encoders and four faders while the device display follows along.
+
+<div align="center">
+<img src="docs/img/main.png" width="820" alt="Zoog main window">
+</div>
+
+## Features
+
+- **Preset browsing from the hardware.** The main encoder scrolls the filtered
+  library, Shift changes category, click loads, all with display feedback.
+- **Per-engine macro mappings** with value-scaling soft takeover, so values
+  never jump, plus live macro names read from the loaded patch.
+- **A MIDI phrase looper** on the transport pads: arm, play, and the loop closes
+  and cycles on the next press. Overdub layers on top.
+- **Eight loop slots on the pads**, each keeping the preset it was recorded
+  with, mixed live from its own engine instance.
+- **Survives the real world.** Controller hotplug and audio stream loss both
+  recover on their own; the status bar carries an output meter, DSP load, and
+  callback health.
+
+Surge XT and Odin2 work out of the box. Other CLAP instruments appear
+automatically; a mapping file makes their knobs live.
+
+**Not affiliated with or endorsed by Arturia.** Device communication is based on
+community-documented MIDI and SysEx behavior, recorded from hardware captures in
+[`docs/`](docs/minilab3-control-map.md).
+
+## Documentation
+
+The [**user manual**](https://cwhite911.github.io/zoog/) covers installation,
+the interface, browsing, macros, the looper and loop slots, adding engines, and
+troubleshooting.
+
+Reference: [control map](docs/minilab3-control-map.md) ·
+[SysEx messages](docs/minilab3-sysex.md) ·
+[capture procedure](docs/capture-script.md)
 
 ## Building
 
-```
+```bash
+./scripts/check-env.sh      # toolchain, ALSA, Vulkan, a CLAP synth
 cargo build --release
+./target/release/zoog
 ```
 
-Run `scripts/check-env.sh` to verify the toolchain, system packages, and a
-CLAP Surge XT installation. `scripts/build-deb.sh` produces the Pop!_OS /
-Debian package (requires cargo-deb).
+`scripts/build-deb.sh` produces a Debian package (needs `cargo-deb`). CI runs
+`cargo fmt --check`, `cargo clippy -D warnings`, and the full test suite on
+every push.
 
-Binaries: `zoog` (the app) and `labctl` (debug CLI: monitor, captures,
-SysEx, plugins, params, presets, play).
+Binaries: `zoog` (the application) and `labctl` (debug CLI: MIDI monitoring and
+captures, device display and pad SysEx, plugin and parameter inspection, the
+preset library, and a headless play mode).
 
 ## Workspace
 
 | Crate | Purpose |
 |---|---|
-| `lab-midi` | Device discovery, event decode, SysEx encode, `Device` trait + mock |
-| `lab-engine` | CLAP hosting, audio I/O, real-time queues, multi-instance mixing |
-| `lab-library` | Preset index, tags, favorites, search |
-| `lab-core` | App core: state machine, macro mapping, looper, glue |
-| `lab-gui` | iced application (`zoog` binary) |
-| `labctl` | Debug CLI |
+| `lab-midi` | Device discovery, MIDI event decoding, SysEx encoding, `Device` trait + mock |
+| `lab-engine` | CLAP hosting, real-time audio, preset discovery, multi-instance mixing |
+| `lab-library` | SQLite preset index: categories, favorites, search |
+| `lab-core` | Application core: engine orchestration, macro mapping, phrase looper |
+| `lab-gui` | iced application (the `zoog` binary) |
+| `labctl` | Debug and development CLI |
+
+Tests run without hardware and without a plugin: device behavior is replayed
+from recorded captures, and engine tests skip cleanly when no CLAP instrument is
+installed.
 
 ## License
 

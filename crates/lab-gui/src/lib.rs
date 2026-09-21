@@ -147,7 +147,8 @@ fn project_controls(controls: &[lab_core::app::ControlInfo]) -> Vec<ControlView>
 /// Loop-slot color for a pad in Loops mode.
 fn slot_color(state: LooperUiState) -> iced::Color {
     match state {
-        LooperUiState::Empty => theme::PAD_OFF,
+        // Distinct from Notes mode so the pad row reads as loop slots.
+        LooperUiState::Empty => theme::SLOT_EMPTY,
         LooperUiState::Armed => iced::Color {
             a: 0.55,
             ..theme::LOOP_REC
@@ -602,10 +603,15 @@ impl App {
             } else {
                 "  "
             };
+            // One line per preset: long names clip rather than wrapping,
+            // which would make the list ragged.
             let label = row![
-                text(format!("{marker}{}", preset.name)).width(Fill),
+                container(text(format!("{marker}{}", preset.name)).wrapping(text::Wrapping::None))
+                    .width(Fill)
+                    .clip(true),
                 text(preset.author.clone().unwrap_or_default())
-                    .size(12)
+                    .size(11)
+                    .wrapping(text::Wrapping::None)
                     .color(theme::TEXT_DIM),
             ]
             .spacing(8);
@@ -639,7 +645,7 @@ impl App {
             scrollable(list).id(PRESET_LIST_ID).height(Fill).width(Fill),
         ]
         .spacing(6)
-        .width(Fill);
+        .width(Length::FillPortion(2));
 
         // Right: macro view.
         let pad_views: [PadView; 8] = std::array::from_fn(|i| PadView {

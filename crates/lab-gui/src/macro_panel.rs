@@ -346,6 +346,14 @@ impl MacroPanel<'_> {
             theme::ACCENT,
         );
 
+        // Fader columns are narrow; shorten the label rather than let
+        // neighbouring labels collide.
+        let column_width = bounds.width * 0.30 / 4.0;
+        let label = if column_width < 70.0 && label.len() > 3 {
+            label.chars().take(3).collect::<String>()
+        } else {
+            label
+        };
         frame.fill_text(Text {
             content: label,
             position: Point::new(track_x, rect.y + rect.height + 12.0),

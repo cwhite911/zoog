@@ -1,0 +1,289 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- SPDX-FileCopyrightText: 2026 Corey T. White -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zoog user manual</title>
+<meta name="description" content="Zoog: a native Linux sound browser, macro controller, and MIDI phrase looper for the Arturia MiniLab 3.">
+<link rel="icon" href="img/zoog.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="hero">
+    <img src="img/zoog.svg" alt="Zoog logo: an upside-down mountain with caves through it">
+    <div>
+      <h1>Zoog</h1>
+      <p>A native Linux sound browser, macro controller, and MIDI phrase looper
+         for the Arturia MiniLab 3. Hosts CLAP instruments, browses their presets
+         from the hardware, and layers loops that each keep their own sound.</p>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+<nav>
+  <div class="group">Start</div>
+  <a href="#what">What Zoog is</a>
+  <a href="#install">Install</a>
+  <a href="#first-run">First run</a>
+  <div class="group">Using it</div>
+  <a href="#interface">The interface</a>
+  <a href="#presets">Browsing presets</a>
+  <a href="#macros">Macros</a>
+  <a href="#looper">The looper</a>
+  <a href="#slots">Loop slots</a>
+  <a href="#engines">Engines</a>
+  <div class="group">Reference</div>
+  <a href="#hardware">Hardware map</a>
+  <a href="#labctl">labctl</a>
+  <a href="#trouble">Troubleshooting</a>
+  <a href="#videos">Videos</a>
+</nav>
+
+<main>
+
+<h2 id="what">What Zoog is</h2>
+<p>
+  Zoog gives the MiniLab 3 the workflow its bundled software offers on Windows and
+  macOS, natively on Linux: plug the controller in, browse a searchable preset
+  library from the hardware or the screen, play with low latency, and shape the
+  sound with the eight encoders and four faders while the device display follows
+  along.
+</p>
+<p>It hosts <strong>CLAP</strong> instruments. Surge XT and Odin2 work out of the
+  box; other CLAP synths appear automatically once installed.</p>
+<div class="note">
+  Zoog is not affiliated with or endorsed by Arturia. Everything it sends to the
+  device is based on community-documented MIDI and SysEx behavior, recorded from
+  hardware captures kept in the repository.
+</div>
+
+<h2 id="install">Install</h2>
+<h3>Debian / Ubuntu / Pop!_OS package</h3>
+<pre><code>sudo apt install ./zoog_0.1.0-1_amd64.deb</code></pre>
+<p>This installs the <code>zoog</code> application, the <code>labctl</code> debug
+   CLI, the desktop entry, and the bundled engine mappings.</p>
+
+<h3>From source</h3>
+<pre><code>git clone https://github.com/cwhite911/zoog.git
+cd zoog
+./scripts/check-env.sh      # verifies toolchain, ALSA, Vulkan, a CLAP synth
+cargo build --release
+./target/release/zoog</code></pre>
+
+<h3>A synth to play</h3>
+<p>Zoog hosts plugins, it does not make sound on its own. Install at least one
+   CLAP instrument:</p>
+<table>
+  <tr><th>Engine</th><th>How</th><th>Notes</th></tr>
+  <tr><td>Surge XT</td><td><code>sudo apt install surge-xt</code></td>
+      <td>Default engine. Full preset library and 8 macros.</td></tr>
+  <tr><td>Odin2</td><td>Install the project's <code>.deb</code></td>
+      <td>Works, but exposes no CLAP preset discovery, so its library is empty in Zoog.</td></tr>
+</table>
+<p>Plugins are found in <code>~/.clap</code>, <code>/usr/lib/clap</code>, and
+   anything in <code>$CLAP_PATH</code>. Check what Zoog can see with
+   <code>labctl plugins</code>, which also reports plugins that failed to load
+   and why.</p>
+
+<h2 id="first-run">First run</h2>
+<ol>
+  <li>Plug in the MiniLab 3.</li>
+  <li>Put it in <strong>DAW mode</strong>. This matters: the device display and
+      the transport pads only work in DAW mode.</li>
+  <li>Launch Zoog. The first launch scans the engine's preset library, which takes
+      roughly half a minute for Surge XT's ~3000 patches, then remembers it.</li>
+  <li>Play. The status bar should read <code>MIDI: connected</code> and show your
+      audio device.</li>
+</ol>
+<div class="note">
+  Zoog remembers the preset you were using and your window size, and reloads them
+  next time.
+</div>
+
+<h2 id="interface">The interface</h2>
+<figure>
+  <img class="shot" src="img/main.png" alt="Zoog main window: filters, preset list, macro panel">
+  <figcaption>Left: filters. Centre: the preset list. Right: the macro panel
+    mirroring the hardware, with the transport row beneath it.</figcaption>
+</figure>
+<p>The status bar along the bottom is the health readout: MIDI connection, the
+   negotiated audio device and sample rate, an output level meter, DSP load,
+   the block size the backend is really delivering, callback overruns, and any
+   stream errors. If something goes quiet, look here first.</p>
+
+<h2 id="presets">Browsing presets</h2>
+<h3>On screen</h3>
+<p>Type to search, use the category picker or the favorites filter to narrow the
+   list, and click a preset once to select it, again to load it. Keyboard:
+   arrows move the selection, <code>Enter</code> loads, <code>Ctrl+F</code>
+   toggles a favorite.</p>
+<h3>On the hardware</h3>
+<table>
+  <tr><th>Control</th><th>Does</th></tr>
+  <tr><td>Main encoder, turn</td><td>Scroll the filtered list; the name and position show on the display</td></tr>
+  <tr><td>Shift + main encoder</td><td>Change category</td></tr>
+  <tr><td>Main encoder, click</td><td>Load the selected preset</td></tr>
+</table>
+<p>The on-screen list follows the hardware selection, so you can browse entirely
+   from the device and still see where you are.</p>
+
+<h2 id="macros">Macros</h2>
+<p>The eight encoders and four faders are mapped per engine. For Surge XT the
+   encoders drive the patch's eight macros and the faders drive the amplitude
+   envelope (attack, decay, sustain, release).</p>
+<p>Two details make this pleasant in practice:</p>
+<ul>
+  <li><strong>Live names.</strong> When a patch names its macros, the knob labels
+      and the device display show those names. Macros the patch leaves unassigned
+      are dimmed, so you can see at a glance which encoders will do something.</li>
+  <li><strong>No value jumps.</strong> The encoders send absolute positions, so
+      after a preset change the knob rarely matches the parameter. Zoog scales
+      your movement into the remaining range: the value responds immediately, and
+      knob and parameter converge instead of the value leaping.</li>
+</ul>
+<p>Dragging an on-screen knob or fader works too, and updates the hardware
+   display.</p>
+
+<h2 id="looper">The looper</h2>
+<p>Zoog records what you play as MIDI and cycles it back through the loaded
+   engine. On the hardware this lives on the Shift row of the pads; on screen it
+   is the transport strip under the macro panel.</p>
+<table>
+  <tr><th>Button</th><th>Does</th></tr>
+  <tr><td>Record</td><td>Arms. Recording starts at your <em>first note</em>, so there is no dead air. Press again to close the loop, which starts playing immediately. While playing, Record toggles overdub.</td></tr>
+  <tr><td>Loop</td><td>Closes the take while recording; otherwise restarts playback from the top.</td></tr>
+  <tr><td>Play</td><td>Restarts the loop.</td></tr>
+  <tr><td>Stop</td><td>Stops playback. During a take it discards it. Pressing it again on a stopped loop clears it.</td></tr>
+</table>
+<p>Loops are session-only and free-running: there is no tempo grid or quantized
+   launch yet, so loop length is exactly how long you played.</p>
+
+<h2 id="slots">Loop slots</h2>
+<p>Switch the pads from notes to loop slots with <strong>Shift + Tap</strong> on
+   the hardware, or the <code>Pads</code> button on screen. Each of the eight pads
+   then becomes an independent loop, with one-tap behavior that depends on what
+   that slot is doing:</p>
+<table>
+  <tr><th>Slot state</th><th>Tapping the pad</th></tr>
+  <tr><td>Empty</td><td>Arms it; play to start recording</td></tr>
+  <tr><td>Recording</td><td>Closes the loop and starts it playing</td></tr>
+  <tr><td>Playing</td><td>Stops it</td></tr>
+  <tr><td>Stopped</td><td>Relaunches it</td></tr>
+</table>
+<div class="chips">
+  <span class="chip"><span class="dot" style="background:#1a3348"></span>empty</span>
+  <span class="chip"><span class="dot" style="background:#e64749"></span>recording</span>
+  <span class="chip"><span class="dot" style="background:#eb8c33"></span>overdub</span>
+  <span class="chip"><span class="dot" style="background:#4cb86b"></span>playing</span>
+  <span class="chip"><span class="dot" style="background:#d9a840"></span>stopped</span>
+</div>
+<figure>
+  <img class="shot" src="img/loops.png" alt="Zoog in loop-slot mode with slot one armed">
+  <figcaption>Loop-slot mode with the first slot armed. The pad backlights on the
+    hardware show the same colors, so you can read the state without looking at
+    the screen.</figcaption>
+</figure>
+<p><strong>Each slot keeps the preset it was recorded with.</strong> Record a bass
+   line, switch to a pad sound and record chords on the next slot, then take a
+   lead for yourself: every layer keeps its own voice, because Zoog gives each
+   slot its own engine instance and mixes them. Your keyboard and the macros always
+   drive the live preset, never the loops.</p>
+<div class="note warn">
+  Stacking many slots means several synth instances running at once. Watch the
+  DSP figure in the status bar if you are layering heavily.
+</div>
+
+<h2 id="engines">Engines</h2>
+<figure>
+  <img class="shot" src="img/settings.png" alt="Zoog settings page showing the engine picker">
+  <figcaption>Settings: pick the engine, review the resolved mapping file, audio
+    configuration, and plugin search paths.</figcaption>
+</figure>
+<p>Switching engines restarts the audio core against the new plugin and remembers
+   your choice. Each engine gets its own preset library and its own macro mapping,
+   matched by the plugin's CLAP identifier.</p>
+<h3>Adding a mapping for a new engine</h3>
+<ol>
+  <li>Install the plugin, then confirm Zoog sees it: <code>labctl plugins</code></li>
+  <li>List its parameters and find the ones worth a knob:
+      <code>labctl params --plugin "Name" --find filter</code></li>
+  <li>Copy <code>mappings/surge-xt.toml</code>, set <code>plugin-id</code> to the
+      plugin's identifier, and fill in the parameter ids you found.</li>
+</ol>
+<p>Drop the file in <code>mappings/</code> next to the binary, in
+   <code>~/.config/zoog/mappings/</code>, or in
+   <code>/usr/share/zoog/mappings/</code>. Engines without a mapping still play;
+   their encoders and faders are simply inactive.</p>
+
+<h2 id="hardware">Hardware map</h2>
+<p>Every control map in Zoog was recorded from the device itself rather than
+   guessed. The complete tables, including both device modes and the SysEx
+   messages Zoog sends to the display and pads, live in the repository:</p>
+<ul>
+  <li><a href="https://github.com/cwhite911/zoog/blob/main/docs/minilab3-control-map.md">MiniLab 3 control map</a></li>
+  <li><a href="https://github.com/cwhite911/zoog/blob/main/docs/minilab3-sysex.md">MiniLab 3 SysEx messages</a></li>
+</ul>
+<p>Short version, in DAW mode: keys and pads play, the eight encoders and four
+   faders are absolute controls, the main encoder browses, and the Shift row of
+   pads is the transport (Loop, Stop, Play, Record, Tap).</p>
+
+<h2 id="labctl">labctl</h2>
+<p>The debug CLI that comes with Zoog. It is how the hardware behavior was
+   discovered in the first place, and it is useful when something misbehaves.</p>
+<table>
+  <tr><th>Command</th><th>Does</th></tr>
+  <tr><td><code>labctl ports</code></td><td>List MIDI ports the system reports</td></tr>
+  <tr><td><code>labctl monitor --capture FILE</code></td><td>Print and record every incoming message</td></tr>
+  <tr><td><code>labctl display "TOP" "BOTTOM"</code></td><td>Write to the device display (DAW mode)</td></tr>
+  <tr><td><code>labctl pad 3 127 0 127</code></td><td>Set a pad color</td></tr>
+  <tr><td><code>labctl plugins</code></td><td>List CLAP plugins, including ones that fail to load</td></tr>
+  <tr><td><code>labctl params --find cutoff</code></td><td>Search a plugin's parameters</td></tr>
+  <tr><td><code>labctl presets scan|search|load</code></td><td>Manage the preset library</td></tr>
+  <tr><td><code>labctl play</code></td><td>Run the whole engine headlessly with stats</td></tr>
+</table>
+
+<h2 id="trouble">Troubleshooting</h2>
+<h3>No sound</h3>
+<p>Check the output meter in the status bar. If it moves, Zoog is producing audio
+   and the problem is downstream: confirm your output device is the system default
+   and its volume is up. If the meter stays at <code>-inf</code> while you play,
+   check that the status bar says <code>MIDI: connected</code>.</p>
+<h3>The controller stops responding</h3>
+<p>Unplug and replug it. Zoog notices within about two seconds, reconnects on its
+   own, and restores the display. A stale USB session can leave the port present
+   but dead, which looks like "everything is fine but nothing works".</p>
+<h3>A plugin does not appear</h3>
+<p>Run <code>labctl plugins</code>. Plugins that exist but cannot be loaded are
+   listed with the loader's reason. A common one is a plugin built against a newer
+   glibc than your distribution ships; the fix is an older build of that plugin or
+   building it from source.</p>
+<h3>Audio stalls</h3>
+<p>If the stream dies, Zoog notices, says so in the status bar, and rebuilds it
+   automatically, retrying a few times before giving up and asking for a restart.</p>
+
+<h2 id="videos">Videos</h2>
+<p>Short demos are coming here: browsing the library from the main encoder,
+   building a layered loop across several pads, and macro control with the
+   display feedback.</p>
+<div class="note">
+  Recording one: <code>ffmpeg -f x11grab -framerate 30 -i :1 -f pulse -i default
+  demo.mp4</code> captures screen and audio together on an X11 session. Drop the
+  file in <code>docs/img/</code> and it can be embedded here.
+</div>
+
+</main>
+</div>
+
+<footer>
+  Zoog is free software under the
+  <a href="https://github.com/cwhite911/zoog/blob/main/LICENSE">GNU GPL v3</a>.
+  Source and issues: <a href="https://github.com/cwhite911/zoog">github.com/cwhite911/zoog</a>.
+</footer>
+
+</body>
+</html>
