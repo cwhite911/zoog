@@ -72,7 +72,7 @@ pub fn run(mut boot: Boot) -> iced::Result {
     }
     let (width, height) = load_window_size().unwrap_or((1100.0, 720.0));
     let icon =
-        iced::window::icon::from_file_data(include_bytes!("../assets/benchlab-256.png"), None).ok();
+        iced::window::icon::from_file_data(include_bytes!("../assets/zoog-256.png"), None).ok();
     iced::application(move || App::new(boot.clone()), App::update, App::view)
         .title(app_title)
         .subscription(App::subscription)
@@ -89,7 +89,7 @@ fn window_state_path() -> Option<std::path::PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-        .map(|base| base.join("benchlab").join("window"))
+        .map(|base| base.join("zoog").join("window"))
 }
 
 fn load_window_size() -> Option<(f32, f32)> {
@@ -189,7 +189,7 @@ fn looper_button_style(
 }
 
 fn app_title(_app: &App) -> String {
-    "benchlab".to_string()
+    "Zoog".to_string()
 }
 
 fn app_theme(_app: &App) -> iced::Theme {
@@ -565,7 +565,7 @@ impl App {
         let mut categories = vec![ALL_CATEGORIES.to_string()];
         categories.extend(self.categories.iter().cloned());
         let filters = column![
-            text("benchlab").size(22),
+            text("Zoog").size(22),
             text(self.plugin_title.clone())
                 .size(14)
                 .color(theme::TEXT_DIM),
@@ -835,7 +835,7 @@ impl App {
                     "Plugin search paths",
                     "CLAP standard paths + $CLAP_PATH".to_string()
                 ),
-                text("These are set with benchlab's command-line flags and apply at startup.")
+                text("These are set with zoog's command-line flags and apply at startup.")
                     .size(12)
                     .color(theme::TEXT_DIM),
                 row![
@@ -857,7 +857,7 @@ fn core_stream(boot: &Boot) -> iced::futures::channel::mpsc::UnboundedReceiver<M
     let (tx, rx) = iced::futures::channel::mpsc::unbounded();
     let config = boot.to_config();
     std::thread::Builder::new()
-        .name("benchlab-core-bridge".to_string())
+        .name("zoog-core-bridge".to_string())
         .spawn(move || {
             let (handle, events) = start(config);
             if tx.unbounded_send(Message::CoreStarted(handle)).is_err() {

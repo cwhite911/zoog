@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Report whether this machine can build and run benchlab.
+# Report whether this machine can build and run Zoog.
 # Exit 0 if all required checks pass; 1 otherwise. Optional checks never fail
 # the script.
 set -u

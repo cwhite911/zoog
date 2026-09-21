@@ -1,11 +1,11 @@
-//! benchlab: the GUI application.
+//! Zoog: the GUI application.
 
 use std::process::exit;
 
 use lab_gui::Boot;
 
 const USAGE: &str = "\
-benchlab [--plugin MATCH] [--mapping FILE] [--arturia-mode]
+Zoog [--plugin MATCH] [--mapping FILE] [--arturia-mode]
          [--rate HZ] [--frames N] [--mock-device] [--stub-engine]
 ";
 
@@ -50,7 +50,7 @@ fn main() {
     }
 
     if let Err(e) = lab_gui::run(boot) {
-        eprintln!("benchlab: {e}");
+        eprintln!("Zoog: {e}");
         exit(1);
     }
 }

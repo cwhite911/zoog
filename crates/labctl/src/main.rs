@@ -18,10 +18,10 @@ use lab_midi::event::{MidiMessage, TimedMessage};
 use lab_midi::ports::{DEFAULT_PORT_MATCH, list_ports};
 use lab_midi::sysex::{ColorTarget, display_text, init, pad_color};
 
-const CLIENT_NAME: &str = "benchlab";
+const CLIENT_NAME: &str = "zoog";
 
 const USAGE: &str = "\
-labctl: benchlab debug CLI
+labctl: zoog debug CLI
 
 USAGE:
     labctl ports

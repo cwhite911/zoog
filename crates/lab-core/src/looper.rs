@@ -333,7 +333,7 @@ impl LooperLogic {
 pub fn spawn(mut producer: rtrb::Producer<RtMidi>) -> Sender<PlayerMsg> {
     let (tx, rx) = channel();
     thread::Builder::new()
-        .name("benchlab-looper".to_string())
+        .name("zoog-looper".to_string())
         .spawn(move || playback_thread(&mut producer, &rx))
         .expect("spawning the looper thread cannot fail");
     tx

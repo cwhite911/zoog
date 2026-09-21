@@ -1,8 +1,8 @@
-//! The benchlab CLAP host implementation: handler types, extension
+//! The zoog CLAP host implementation: handler types, extension
 //! declarations, and the plugin-registered timer bookkeeping.
 //!
 //! Follows the clack cpal host example's structure, without the GUI
-//! extension (benchlab never opens plugin editors).
+//! extension (zoog never opens plugin editors).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -220,9 +220,9 @@ impl Timer {
 /// Host identity reported to plugins.
 pub fn host_info() -> HostInfo {
     HostInfo::new(
-        "benchlab",
-        "benchlab",
-        "https://github.com/cwhite911/linux-midi-lab-3",
+        "zoog",
+        "zoog",
+        "https://github.com/cwhite911/zoog",
         env!("CARGO_PKG_VERSION"),
     )
     .expect("host info strings contain no interior NUL")

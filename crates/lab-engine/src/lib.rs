@@ -2,7 +2,7 @@
 //! queues between the MIDI, control, and audio threads.
 //!
 //! Structure follows the clack cpal host example (read end to end at rev
-//! 27ca283), minus plugin GUIs, which benchlab never opens.
+//! 27ca283), minus plugin GUIs, which zoog never opens.
 
 pub mod audio;
 pub mod discovery;

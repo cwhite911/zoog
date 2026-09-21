@@ -3,7 +3,7 @@
 //! Every byte layout here is transcribed from community documentation; see
 //! `docs/minilab3-sysex.md` for sources, verification status, and the rule
 //! that nothing undocumented may be sent. Display text only works in DAW
-//! mode; benchlab designs around that.
+//! mode; zoog designs around that.
 
 /// `F0` + Arturia vendor/device prefix shared by every message.
 const HEADER: [u8; 6] = [0xF0, 0x00, 0x20, 0x6B, 0x7F, 0x42];

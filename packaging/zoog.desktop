@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Zoog
+Comment=Sound browser, looper, and CLAP host for the Arturia MiniLab 3
+Exec=zoog
+Icon=zoog
+Terminal=false
+Categories=Audio;AudioVideo;Music;
+Keywords=synth;midi;clap;preset;looper;

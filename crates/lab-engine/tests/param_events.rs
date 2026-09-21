@@ -1,6 +1,6 @@
 //! Regression test: sending `ParamValueEvent`s during processing must not
 //! crash the plugin (crash observed on hardware with Odin2 when moving an
-//! encoder). Runs against every installed engine with a benchlab mapping;
+//! encoder). Runs against every installed engine with a zoog mapping;
 //! skips engines that are not installed.
 
 use std::ffi::CString;

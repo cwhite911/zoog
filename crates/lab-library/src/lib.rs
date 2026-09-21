@@ -71,9 +71,9 @@ impl Library {
     }
 
     /// The default on-disk location under XDG data
-    /// (`~/.local/share/benchlab/library.sqlite3`).
+    /// (`~/.local/share/zoog/library.sqlite3`).
     pub fn default_path() -> Option<PathBuf> {
-        directories::ProjectDirs::from("", "", "benchlab")
+        directories::ProjectDirs::from("", "", "zoog")
             .map(|dirs| dirs.data_dir().join("library.sqlite3"))
     }
 

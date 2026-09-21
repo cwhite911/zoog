@@ -9,7 +9,7 @@ use lab_engine::host::{
     BenchHost, BenchHostMainThread, BenchHostShared, HostThreadMessage, host_info,
 };
 
-/// Instantiates a plugin with the benchlab host, returning the instance and
+/// Instantiates a plugin with the zoog host, returning the instance and
 /// the host-thread message receiver.
 pub fn make_instance(
     plugin: &FoundPlugin,

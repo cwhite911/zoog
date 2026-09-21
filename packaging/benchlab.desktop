@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=benchlab
-Comment=Sound browser and CLAP host for the Arturia MiniLab 3
-Exec=benchlab
-Icon=benchlab
-Terminal=false
-Categories=Audio;AudioVideo;Music;
-Keywords=synth;midi;clap;preset;

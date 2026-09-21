@@ -1,4 +1,4 @@
-//! The benchlab application core: owns the plugin host thread, the device
+//! The zoog application core: owns the plugin host thread, the device
 //! control thread, the audio stream, and the preset library, and exposes
 //! them through command/event channels.
 //!
@@ -33,7 +33,7 @@ use crate::looper::{
 };
 use crate::mapping::{Control, MacroControls, MappingFile};
 
-pub const CLIENT_NAME: &str = "benchlab";
+pub const CLIENT_NAME: &str = "zoog";
 
 #[derive(Debug, Clone)]
 pub struct CoreConfig {
@@ -66,9 +66,34 @@ impl Default for CoreConfig {
     }
 }
 
-/// Path of the session state file (`~/.config/benchlab/session.toml`).
+/// One-time migration from the old working name: moves the benchlab
+/// config and data directories to zoog so favorites, session, and the
+/// library survive the rename.
+fn migrate_benchlab_dirs() {
+    for (old_dirs, new_dirs) in [(
+        directories::ProjectDirs::from("", "", "benchlab"),
+        directories::ProjectDirs::from("", "", "zoog"),
+    )] {
+        let (Some(old), Some(new)) = (old_dirs, new_dirs) else {
+            continue;
+        };
+        for (from, to) in [
+            (old.config_dir(), new.config_dir()),
+            (old.data_dir(), new.data_dir()),
+        ] {
+            if from.exists() && !to.exists() {
+                if let Some(parent) = to.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::rename(from, to);
+            }
+        }
+    }
+}
+
+/// Path of the session state file (`~/.config/zoog/session.toml`).
 fn session_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "benchlab")
+    directories::ProjectDirs::from("", "", "zoog")
         .map(|dirs| dirs.config_dir().join("session.toml"))
 }
 
@@ -258,10 +283,11 @@ impl CoreHandle {
 /// threads. Fatal startup errors arrive as [`CoreEvent::Error`] followed by
 /// the event channel closing.
 pub fn start(config: CoreConfig) -> (CoreHandle, Receiver<CoreEvent>) {
+    migrate_benchlab_dirs();
     let (event_tx, event_rx) = channel();
     let (command_tx, command_rx) = channel();
     thread::Builder::new()
-        .name("benchlab-host".to_string())
+        .name("zoog-host".to_string())
         .spawn(move || {
             if let Err(e) = host_thread(config, command_rx, &event_tx) {
                 let _ = event_tx.send(CoreEvent::Error(e.to_string()));
@@ -349,7 +375,7 @@ fn host_thread(
             host_rx = Some(rx);
             found.name.clone().unwrap_or_else(|| found.id.clone())
         }
-        None => "benchlab (no engine)".to_string(),
+        None => "zoog (no engine)".to_string(),
     };
     if let Some(instance) = instance.as_mut() {
         params = lab_engine::params::list_params(instance);
@@ -443,7 +469,7 @@ fn host_thread(
             looper_tx: looper_tx.clone(),
         };
         thread::Builder::new()
-            .name("benchlab-control".to_string())
+            .name("zoog-control".to_string())
             .spawn(move || ctx.run())?;
     }
 
@@ -742,7 +768,7 @@ fn host_thread(
                     && let Err(e) = instance.try_deactivate()
                 {
                     let _ = events.send(CoreEvent::Error(format!(
-                        "plugin deactivation failed: {e}; restart benchlab"
+                        "plugin deactivation failed: {e}; restart zoog"
                     )));
                     continue;
                 }
@@ -787,7 +813,7 @@ fn host_thread(
                         let _ = events.send(CoreEvent::Error(format!(
                             "audio stream rebuild failed: {e}{}",
                             if rebuild_failures >= 5 {
-                                "; giving up, restart benchlab"
+                                "; giving up, restart zoog"
                             } else {
                                 "; retrying in 5 s"
                             }
@@ -946,10 +972,10 @@ fn control_infos(controls: &MacroControls) -> Vec<ControlInfo> {
 /// development, user, and system mapping directories in that order.
 fn find_mapping_for(plugin_id: &str) -> Option<PathBuf> {
     let mut dirs = vec![PathBuf::from("mappings")];
-    if let Some(project) = directories::ProjectDirs::from("", "", "benchlab") {
+    if let Some(project) = directories::ProjectDirs::from("", "", "zoog") {
         dirs.push(project.config_dir().join("mappings"));
     }
-    dirs.push(PathBuf::from("/usr/share/benchlab/mappings"));
+    dirs.push(PathBuf::from("/usr/share/zoog/mappings"));
 
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -1250,13 +1276,13 @@ impl ControlThread {
         }
     }
 
-    /// Sends the init handshake, benchlab's pad wash, and the current
+    /// Sends the init handshake, zoog's pad wash, and the current
     /// title to a (re)connected device.
     fn greet_device(&mut self) {
         if let Some(device) = self.device.device_mut() {
             let _ = device.send(&init());
         }
-        // Pad wash marks "benchlab connected" and doubles as the looper
+        // Pad wash marks "zoog connected" and doubles as the looper
         // state light (temporary colors survive taps in DAW mode).
         self.paint_pads();
         let title = self.title.clone();
