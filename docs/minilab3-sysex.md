@@ -16,8 +16,7 @@ Messages verified on hardware are marked; everything else is
 transcribed-but-unverified.
 
 Implementation: `crates/lab-midi/src/sysex.rs`, golden-byte unit tests in
-the same file. Per PLAN.md Phase 2, no SysEx may be sent that is not
-documented in this file.
+the same file. No SysEx may be sent that is not documented here.
 
 ## Header
 
@@ -29,7 +28,7 @@ both sources.)
 
 Display text works in **DAW mode** only; the gist comments report no known
 way to write the display in Arturia mode. Pad colors have per-mode prefix
-variants (below). benchlab designs around DAW mode.
+variants (below). Zoog designs around DAW mode.
 
 ## Init / handshake
 
@@ -64,7 +63,7 @@ Comments: persistent colors survive bank/program changes but reset on power
 cycle. User-mode colors are temporary, lost on bank/mode change and when the
 pad is pressed; the idle grey is approximately `19 19 19`.
 
-## Display text, two lines, left-aligned (the Phase 2 message)
+## Display text, two lines, left-aligned (the message Zoog uses)
 
 ```
 F0 00 20 6B 7F 42 04 02 60 01 <S1...> 00 02 <S2...> F7
@@ -87,8 +86,8 @@ F0 00 20 6B 7F 42 04 02 60 1F 07 01 P1 P2 01 00 01 <S1> 00 02 <S2> 00 F7
 Pictogram values: 0x00 none, 0x01 heart, 0x02 play, 0x03 record,
 0x04 armed, 0x05 shift.
 
-Control visualization ("info display", intended for Phase 4 knob/fader
-feedback):
+Control visualization ("info display", a candidate for richer knob and
+fader feedback):
 
 ```
 F0 00 20 6B 7F 42 04 02 60 1F CC AH VV 00 00 01 <S1> 00 02 <S2> F7
@@ -98,7 +97,7 @@ F0 00 20 6B 7F 42 04 02 60 1F CC AH VV 00 00 01 <S1> 00 02 <S2> F7
 - `AH` autohide: 0x00 persistent, 0x02 autohide after seconds.
 - `VV` value 0x00..0x7F.
 
-Scrolling list (intended for Phase 5 preset browsing):
+Scrolling list (a candidate for richer preset browsing):
 
 ```
 F0 00 20 6B 7F 42 04 02 60 1F CC AH PO 00 LE 00 00 01 <S1> 00 02 <S2> 00 F7

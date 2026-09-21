@@ -1,5 +1,4 @@
-//! MIDI phrase looper (scope amendment to PLAN.md: record/loop on the
-//! DAW-mode transport pads).
+//! MIDI phrase looper, driven by the DAW-mode transport pads.
 //!
 //! Two parts:
 //! * [`LooperLogic`]: a pure state machine (button presses and note events

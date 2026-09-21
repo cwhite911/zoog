@@ -1,6 +1,6 @@
-//! Debug and development CLI. Subcommands arrive with each phase:
-//! `ports`/`monitor` (Phase 1), `display`/`pad` (Phase 2), `play` (Phase 3),
-//! `presets` (Phase 5).
+//! Debug and development CLI: port listing and MIDI monitoring with
+//! capture files, device display and pad SysEx, plugin and parameter
+//! inspection, the preset library, and a headless play mode.
 
 mod hostutil;
 mod presets;

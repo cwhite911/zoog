@@ -1,6 +1,6 @@
 //! Preset discovery (CLAP preset discovery factory) and preset loading
-//! (`clap.preset-load`). See docs/DECISIONS.md "Phase 5 preset
-//! investigation" for why this path was chosen.
+//! (`clap.preset-load`). Surge XT exposes both, which is why this path
+//! is preferred over host-side `clap.state` snapshots.
 
 use std::error::Error;
 use std::ffi::{CStr, CString};

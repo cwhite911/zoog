@@ -1,10 +1,9 @@
 //! Coalescing rate limiter for device feedback.
 //!
 //! Knob sweeps produce hundreds of display updates per second; the device
-//! only needs the newest one at a bounded rate (PLAN.md Phase 2 suggests at
-//! most ~30/s). `Coalescer` keeps the latest pending item and releases it no
-//! faster than the configured interval. Time is injected so tests need no
-//! clock.
+//! only needs the newest one at a bounded rate (about 30/s). `Coalescer`
+//! keeps the latest pending item and releases it no faster than the
+//! configured interval. Time is injected so tests need no clock.
 
 use std::time::{Duration, Instant};
 

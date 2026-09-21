@@ -199,8 +199,8 @@ pub enum DeviceEvent {
 }
 
 /// How a relative encoder encodes its delta in a 7-bit CC value. Which one
-/// the MiniLab 3 uses (and in which mode) is determined from the Phase 1
-/// capture, not assumed.
+/// the MiniLab 3 uses (and in which mode) is determined from hardware
+/// captures, not assumed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelativeEncoding {
     /// 64 is zero; 65 = +1, 63 = -1.

@@ -19,7 +19,7 @@ pub trait Device {
     fn try_recv(&mut self) -> Option<TimedMessage>;
     /// Blocking receive with a timeout. `None` on timeout.
     fn recv_timeout(&mut self, timeout: Duration) -> Option<TimedMessage>;
-    /// Send raw MIDI bytes to the device (SysEx feedback in Phase 2).
+    /// Send raw MIDI bytes to the device (display and pad SysEx).
     fn send(&mut self, bytes: &[u8]) -> Result<(), MidiError>;
 }
 

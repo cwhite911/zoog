@@ -45,7 +45,7 @@ pub struct SlotChannels {
     pub retired: rtrb::Consumer<(usize, StoppedPluginAudioProcessor<BenchHost>)>,
 }
 
-/// Requested engine configuration. Defaults per PLAN.md Phase 3.
+/// Requested engine configuration.
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
     pub sample_rate: u32,

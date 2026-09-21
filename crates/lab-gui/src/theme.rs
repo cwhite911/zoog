@@ -1,4 +1,4 @@
-//! Design tokens: every color the GUI uses, in one place (PLAN.md Phase 6).
+//! Design tokens: every color the GUI uses, in one place.
 //! Dark theme first; the base widget styling comes from `iced::Theme::Dark`,
 //! these tokens cover the custom canvas drawing and accents.
 

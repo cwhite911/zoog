@@ -119,7 +119,8 @@ impl<'a> MainThreadHandler<'a> for BenchHostMainThread {
 
 impl HostParamsImplMainThread for BenchHostMainThread {
     fn rescan(&self, _flags: ParamRescanFlags) {
-        // Parameter tracking arrives in Phase 4.
+        // Host-side parameter values are re-read on demand instead of
+        // tracked incrementally, so a rescan needs no action here.
     }
 
     fn clear(&self, _param_id: ClapId, _flags: ParamClearFlags) {}

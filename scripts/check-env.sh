@@ -55,7 +55,7 @@ else
     bad "vulkan" "libvulkan not found; install vulkan drivers/loader for iced"
 fi
 
-# Surge XT CLAP plugin (required from Phase 3 on)
+# Surge XT CLAP plugin (the default engine)
 surge=""
 IFS=':' read -r -a extra_paths <<< "${CLAP_PATH:-}"
 for dir in "$HOME/.clap" /usr/lib/clap "${extra_paths[@]}"; do

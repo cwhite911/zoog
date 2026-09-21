@@ -2,7 +2,7 @@
 //! control thread, the audio stream, and the preset library, and exposes
 //! them through command/event channels.
 //!
-//! Thread model (PLAN.md 5.1): the CLAP "main thread" is the dedicated host
+//! Thread model: the CLAP "main thread" is the dedicated host
 //! thread spawned here, never the OS main thread; the GUI (or labctl) talks
 //! to it exclusively through [`CoreHandle`] commands and [`CoreEvent`]s.
 //! Everything runs without hardware (mock device) and without the plugin
@@ -66,10 +66,10 @@ impl Default for CoreConfig {
     }
 }
 
-/// One-time migration from the old working name: moves the benchlab
-/// config and data directories to zoog so favorites, session, and the
-/// library survive the rename.
-fn migrate_benchlab_dirs() {
+/// One-time migration from the pre-release working name: moves the old
+/// config and data directories to the current ones so favorites, session,
+/// and the library survive the rename.
+fn migrate_legacy_dirs() {
     for (old_dirs, new_dirs) in [(
         directories::ProjectDirs::from("", "", "benchlab"),
         directories::ProjectDirs::from("", "", "zoog"),
@@ -98,8 +98,8 @@ fn session_path() -> Option<PathBuf> {
 }
 
 /// Persisted session state. Kept tiny and rewritten on every preset load so
-/// a crash loses at most the current selection (PLAN.md Phase 7 panic
-/// safety: save often, restart cleanly).
+/// a crash loses at most the current selection (a plugin crash is
+/// unrecoverable in-process, so save often and restart cleanly).
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct SessionState {
     last_preset: Option<i64>,
@@ -283,7 +283,7 @@ impl CoreHandle {
 /// threads. Fatal startup errors arrive as [`CoreEvent::Error`] followed by
 /// the event channel closing.
 pub fn start(config: CoreConfig) -> (CoreHandle, Receiver<CoreEvent>) {
-    migrate_benchlab_dirs();
+    migrate_legacy_dirs();
     let (event_tx, event_rx) = channel();
     let (command_tx, command_rx) = channel();
     thread::Builder::new()

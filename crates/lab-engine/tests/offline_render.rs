@@ -1,4 +1,4 @@
-//! Offline render test (PLAN.md Phase 3): load Surge XT, push a note-on,
+//! Offline render test: load Surge XT, push a note-on,
 //! process blocks with no audio device or hardware, and assert the output is
 //! sound-shaped: audible after the attack, decaying after note-off.
 //!

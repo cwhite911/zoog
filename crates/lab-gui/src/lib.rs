@@ -1,5 +1,5 @@
 //! iced GUI. Depends only on lab-core; runs fully against the mock device
-//! and stub engine (PLAN.md Phase 6).
+//! and stub engine, so it is usable with no hardware and no plugin.
 
 mod macro_panel;
 mod theme;

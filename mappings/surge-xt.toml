@@ -6,8 +6,8 @@
 # change when a patch renames them, so the "M1:" prefix is what stays
 # stable).
 #
-# Encoders 1..8: Surge's 8 patch macros (PLAN.md Phase 4 default).
-# Faders 1..4: scene A amp envelope A/D/S/R (confirmed by Corey).
+# Encoders 1..8: Surge's 8 patch macros.
+# Faders 1..4: scene A amp envelope A/D/S/R.
 
 plugin-id = "org.surge-synth-team.surge-xt"
 

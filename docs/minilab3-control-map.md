@@ -8,7 +8,7 @@ Generated from hardware capture, not vendor documentation.
 - Firmware version: not recorded (TODO: read from MIDI Control Center or a
   device inquiry and note it here).
 - ALSA ports (recorded 2026-09-18 via `labctl ports`): the device exposes
-  four in/out pairs, `Minilab3:Minilab3 MIDI 36:0` (the one benchlab uses
+  four in/out pairs, `Minilab3:Minilab3 MIDI 36:0` (the one Zoog uses
   for everything verified so far), `DIN THRU 36:1`, `MCU/HUI 36:2`, and
   `ALV 36:3`. The default matcher is `"minilab3 midi"`.
 - User mode capture: not yet recorded.
@@ -44,8 +44,8 @@ button CCs. Only the CC numbers differ (tables below).
 | 8 | 16 | 117 |
 
 Absolute values in both modes: encoder 1 swept 0..127 one step at a time in
-both captures. Soft takeover will be needed in Phase 4 (values jump to the
-knob's stored position, and each preset change can leave stale positions).
+both captures. Soft takeover is therefore required: values would otherwise jump to the
+knob's stored position, and each preset change leaves stale positions.
 
 ## Faders (channel 0, absolute 0..127)
 
@@ -96,9 +96,9 @@ program via Shift+Pad3 (the Shift CC there, 27, matches the DAW capture):
 127 press / 0 release (Tap once sent 68 as its press value).
 
 These are remote-control buttons: the device has no transport or looper of
-its own, it only transmits these CCs for host software to act on. benchlab
+its own, it only transmits these CCs for host software to act on. Zoog
 types them as `Transport` events and currently ignores them (a phrase
-looper behind them is a Phase 8 candidate).
+looper is wired behind them).
 
 ## Shift + pads (mode row, Arturia mode)
 
@@ -130,7 +130,7 @@ unconfirmed.
 | Shift+Pad3 | `F0 00 20 6B 7F 42 02 00 40 62 02 F7` |
 
 All share the Arturia header `F0 00 20 6B 7F 42` documented in the community
-gist referenced by PLAN.md section 8. The `40 63 xx` / `40 62 xx` payloads
+gist cited in docs/minilab3-sysex.md. The `40 63 xx` / `40 62 xx` payloads
 look like state notifications (pad bank, program); treat as observations, not
 a protocol spec.
 
@@ -138,5 +138,5 @@ a protocol spec.
 
 - User mode.
 - Firmware version.
-- Whether the display reacted to anything during the DAW session (Phase 2
-  will drive it with SysEx).
+- Whether the device display reacts to anything on its own in DAW mode
+  (Zoog drives it with SysEx).
