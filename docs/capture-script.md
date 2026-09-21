@@ -1,4 +1,4 @@
-# Phase 1 hardware capture script
+# MiniLab 3 hardware capture script
 
 Goal: capture every control of the MiniLab 3 in each mode so
 `docs/minilab3-control-map.md` can be generated from observed data. Run one
